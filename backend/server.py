@@ -1661,6 +1661,8 @@ app.include_router(clauses_router)
 app.include_router(contracts_router)
 app.include_router(flowdown_router)
 app.include_router(user_router)
+app.include_router(agiloft_router)
+app.include_router(export_router)
 
 app.add_middleware(
     CORSMiddleware,
