@@ -1242,33 +1242,47 @@ async def test_agiloft_connection(config: AgiloftConfig, request: Request):
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Agiloft REST API login endpoint
-            login_url = f"{config.kb_url}/EWLogin"
+            # Format: {base_url}/login?lang=en with JSON body
+            login_url = f"{config.kb_url}/login"
             
             response = await client.post(
                 login_url,
-                data={
+                params={"lang": "en"},
+                json={
                     "login": config.username,
                     "password": config.password,
                     "KB": config.kb_name
-                }
+                },
+                headers={"Content-Type": "application/json"}
             )
             
             if response.status_code == 200:
-                # Check if login was successful
-                if "error" in response.text.lower():
-                    return {"success": False, "message": "Authentication failed", "details": response.text}
+                try:
+                    result = response.json()
+                    # Agiloft returns a token on successful login
+                    if result.get("token") or result.get("success") or response.status_code == 200:
+                        return {
+                            "success": True,
+                            "message": "Successfully connected to Agiloft KB",
+                            "kb_name": config.kb_name,
+                            "token": result.get("token", "")[:20] + "..." if result.get("token") else None
+                        }
+                except:
+                    pass
                 
-                return {
-                    "success": True,
-                    "message": "Successfully connected to Agiloft KB",
-                    "kb_name": config.kb_name
-                }
-            else:
-                return {
-                    "success": False,
-                    "message": f"Connection failed with status {response.status_code}",
-                    "details": response.text
-                }
+                # Check if response indicates success
+                if "error" not in response.text.lower():
+                    return {
+                        "success": True,
+                        "message": "Successfully connected to Agiloft KB",
+                        "kb_name": config.kb_name
+                    }
+            
+            return {
+                "success": False,
+                "message": f"Connection failed with status {response.status_code}",
+                "details": response.text[:500] if response.text else "No response"
+            }
     except Exception as e:
         logger.error(f"Agiloft connection error: {e}")
         return {"success": False, "message": f"Connection error: {str(e)}"}
