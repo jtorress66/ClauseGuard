@@ -1432,43 +1432,9 @@ async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Req
                 "updated_count": updated_count
             }
             
-            if login_response.status_code != 200:
-                return {"success": False, "message": "Agiloft authentication failed"}
-            
-            cookies = login_response.cookies
-            
-            created_count = 0
-            updated_count = 0
-            
-            for clause in clauses_to_push:
-                # Check if clause exists in Agiloft
-                search_url = f"{config.kb_url}/EWSearch"
-                search_response = await client.post(
-                    search_url,
-                    cookies=cookies,
-                    data={
-                        "KB": config.kb_name,
-                        "$table": "Clauses",
-                        "$filter": f"clause_number='{clause.get('number', '')}'"
-                    }
-                )
-                
-                clause_data = {
-                    "clause_number": clause.get("number", ""),
-                    "clause_title": clause.get("title", ""),
-                    "clause_type": clause.get("type", "FAR"),
-                    "clause_text": clause.get("text", "")[:32000],  # Agiloft field size limit
-                    "clause_summary": clause.get("summary", ""),
-                    "flowdown_required": "Yes" if clause.get("flowdown_required") else "No",
-                    "threshold_amount": str(clause.get("threshold_amount", 0) or 0),
-                    "keywords": ", ".join(clause.get("keywords", [])),
-                    "source_url": clause.get("source_url", ""),
-                    "last_updated": datetime.now(timezone.utc).isoformat()
-                }
-                
-                try:
-                    existing = search_response.json() if search_response.status_code == 200 else {}
-                    records = existing.get("records", existing.get("result", []))
+    except Exception as e:
+        logger.error(f"Agiloft push error: {e}")
+        return {"success": False, "message": f"Push failed: {str(e)}"}
                     
                     if records:
                         # Update existing
