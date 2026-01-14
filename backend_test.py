@@ -174,7 +174,7 @@ class FederalClauseAPITester:
             "include_flowdown_info": True,
             "format": "pdf"
         }
-        self.run_test("Batch Export PDF (Authenticated)", "POST", "api/export/batch", 200, export_data_pdf)
+        success, _ = self.run_test("Batch Export PDF (Authenticated)", "POST", "api/export/batch", 200, export_data_pdf, expect_json=False)
         
         export_data_json = {
             "clause_numbers": ["52.212-4"],
@@ -183,7 +183,7 @@ class FederalClauseAPITester:
             "include_flowdown_info": True,
             "format": "json"
         }
-        self.run_test("Batch Export JSON (Authenticated)", "POST", "api/export/batch", 200, export_data_json)
+        success, _ = self.run_test("Batch Export JSON (Authenticated)", "POST", "api/export/batch", 200, export_data_json)
         
         export_data_csv = {
             "clause_numbers": ["52.212-4"],
@@ -192,7 +192,7 @@ class FederalClauseAPITester:
             "include_flowdown_info": True,
             "format": "csv"
         }
-        self.run_test("Batch Export CSV (Authenticated)", "POST", "api/export/batch", 200, export_data_csv)
+        success, _ = self.run_test("Batch Export CSV (Authenticated)", "POST", "api/export/batch", 200, export_data_csv, expect_json=False)
         
         # Test flowdown report export
         flowdown_params = f"contract_type={flowdown_data['contract_type']}&contract_value={flowdown_data['contract_value']}&clauses={','.join(flowdown_data['clauses'])}"
