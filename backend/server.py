@@ -1435,59 +1435,6 @@ async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Req
     except Exception as e:
         logger.error(f"Agiloft push error: {e}")
         return {"success": False, "message": f"Push failed: {str(e)}"}
-                    
-                    if records:
-                        # Update existing
-                        update_url = f"{config.kb_url}/EWUpdate"
-                        await client.post(
-                            update_url,
-                            cookies=cookies,
-                            data={
-                                "KB": config.kb_name,
-                                "$table": "Clauses",
-                                "$id": records[0].get("id", records[0].get("$id")),
-                                **clause_data
-                            }
-                        )
-                        updated_count += 1
-                    else:
-                        # Create new
-                        create_url = f"{config.kb_url}/EWCreate"
-                        await client.post(
-                            create_url,
-                            cookies=cookies,
-                            data={
-                                "KB": config.kb_name,
-                                "$table": "Clauses",
-                                **clause_data
-                            }
-                        )
-                        created_count += 1
-                except:
-                    # If JSON parse fails, try to create anyway
-                    create_url = f"{config.kb_url}/EWCreate"
-                    await client.post(
-                        create_url,
-                        cookies=cookies,
-                        data={
-                            "KB": config.kb_name,
-                            "$table": "Clauses",
-                            **clause_data
-                        }
-                    )
-                    created_count += 1
-            
-            return {
-                "success": True,
-                "message": f"Pushed {created_count + updated_count} clauses to Agiloft",
-                "pushed_count": created_count + updated_count,
-                "created_count": created_count,
-                "updated_count": updated_count
-            }
-            
-    except Exception as e:
-        logger.error(f"Agiloft push error: {e}")
-        return {"success": False, "message": f"Push failed: {str(e)}"}
 
 class AgiloftContractsRequest(BaseModel):
     """Request to fetch Agiloft contracts"""
