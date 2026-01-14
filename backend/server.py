@@ -151,14 +151,14 @@ async def get_current_user(request: Request) -> Optional[User]:
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
             session_token = auth_header.split(" ")[1]
-    
+
     if not session_token:
         return None
-    
+
     session_doc = await db.user_sessions.find_one({"session_token": session_token}, {"_id": 0})
     if not session_doc:
         return None
-    
+
     expires_at = session_doc.get("expires_at")
     if isinstance(expires_at, str):
         expires_at = datetime.fromisoformat(expires_at)
@@ -166,11 +166,11 @@ async def get_current_user(request: Request) -> Optional[User]:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     if expires_at < datetime.now(timezone.utc):
         return None
-    
+
     user_doc = await db.users.find_one({"user_id": session_doc["user_id"]}, {"_id": 0})
     if not user_doc:
         return None
-    
+
     return User(**user_doc)
 
 async def require_auth(request: Request) -> User:
@@ -184,18 +184,18 @@ async def get_ai_response(prompt: str, system_message: str = "You are a helpful 
     """Get AI response using OpenAI via emergentintegrations"""
     try:
         from emergentintegrations.llm.chat import LlmChat, UserMessage
-        
+
         api_key = os.environ.get("EMERGENT_LLM_KEY")
         if not api_key:
             logger.warning("EMERGENT_LLM_KEY not found, returning placeholder response")
             return "AI analysis not available - API key not configured."
-        
+
         chat = LlmChat(
             api_key=api_key,
             session_id=f"clause-analysis-{uuid.uuid4()}",
             system_message=system_message
         ).with_model("openai", "gpt-5.2")
-        
+
         user_message = UserMessage(text=prompt)
         response = await chat.send_message(user_message)
         return response
@@ -210,7 +210,7 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
     try:
         from bs4 import BeautifulSoup
         import re
-        
+
         # Determine if FAR or DFARS and build the direct clause URL
         if clause_number.startswith("252"):
             # DFARS clause - format: 252.xxx-xxxx
@@ -222,14 +222,14 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
             clause_type = "FAR"
             # FAR clauses are at acquisition.gov/far/52.xxx-xx
             clause_url = f"https://www.acquisition.gov/far/{clause_number.lower()}"
-        
+
         async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
             # Try direct clause URL first
             response = await client.get(clause_url)
-            
+
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
-                
+
                 # Extract title from page title or h1
                 title = ""
                 page_title = soup.find('title')
@@ -239,39 +239,39 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                     title = re.sub(r'^(FAR|DFARS)\s*', '', title_text)
                     title = re.sub(r'^\d+\.\d+-\d+\s*', '', title)
                     title = title.replace('| Acquisition.GOV', '').strip()
-                
+
                 if not title:
                     h1 = soup.find('h1')
                     if h1:
                         title = h1.get_text().strip()
                         title = re.sub(r'^\d+\.\d+-\d+\s*', '', title)
-                
+
                 # Extract full clause text from the main content area
                 text_parts = []
-                
+
                 # Look for the main content div
                 main_content = soup.find('div', class_='field--name-body') or \
                                soup.find('article') or \
                                soup.find('main') or \
                                soup.find('div', class_='content')
-                
+
                 if main_content:
                     # Get all paragraphs, lists, and text content
                     for elem in main_content.find_all(['p', 'li', 'div', 'span']):
                         text = elem.get_text().strip()
                         if text and len(text) > 10:  # Filter out very short fragments
                             text_parts.append(text)
-                
+
                 # If no main content found, try getting all paragraphs
                 if not text_parts:
                     for p in soup.find_all('p'):
                         text = p.get_text().strip()
                         if text and len(text) > 20:
                             text_parts.append(text)
-                
+
                 # Join and clean up text
                 full_text = "\n\n".join(text_parts)
-                
+
                 # Remove duplicate lines
                 lines = full_text.split('\n')
                 seen = set()
@@ -282,7 +282,7 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                         seen.add(line_clean)
                         unique_lines.append(line)
                 full_text = "\n".join(unique_lines)[:50000]  # Limit to 50KB
-                
+
                 # Extract keywords from text
                 keywords = []
                 keyword_patterns = [
@@ -294,13 +294,13 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                 for pattern in keyword_patterns:
                     if re.search(pattern, full_text, re.IGNORECASE):
                         keywords.append(pattern.replace(r'\s+', ' '))
-                
+
                 # Determine flowdown requirement (common indicators)
                 flowdown_required = bool(re.search(
                     r'flow.?down|subcontract|lower.?tier|prime contractor shall',
                     full_text, re.IGNORECASE
                 ))
-                
+
                 return {
                     "clause_id": str(uuid.uuid4()),
                     "number": clause_number,
@@ -316,10 +316,10 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                     "source": "acquisition.gov",
                     "source_url": clause_url
                 }
-            
+
             # If direct URL fails, try the part page
             logger.info(f"Direct URL failed for {clause_number}, trying part page")
-            
+
         return None
     except Exception as e:
         logger.error(f"Error fetching from acquisition.gov: {e}")
@@ -335,16 +335,16 @@ async def fetch_far_index() -> List[Dict[str, str]]:
                 "https://www.acquisition.gov/far/part-52",
                 follow_redirects=True
             )
-            
+
             if response.status_code == 200:
                 from bs4 import BeautifulSoup
                 soup = BeautifulSoup(response.text, 'html.parser')
-                
+
                 # Find all clause links
                 for link in soup.find_all('a'):
                     href = link.get('href', '')
                     text = link.get_text().strip()
-                    
+
                     # Match FAR clause pattern (52.xxx-x)
                     import re
                     match = re.search(r'52\.\d{3}-\d+', text)
@@ -354,13 +354,13 @@ async def fetch_far_index() -> List[Dict[str, str]]:
                         title = text.replace(clause_num, "").strip()
                         if title.startswith("-"):
                             title = title[1:].strip()
-                        
+
                         clauses.append({
                             "number": clause_num,
                             "title": title or f"FAR Clause {clause_num}",
                             "type": "FAR"
                         })
-                
+
                 # Remove duplicates
                 seen = set()
                 unique_clauses = []
@@ -368,12 +368,12 @@ async def fetch_far_index() -> List[Dict[str, str]]:
                     if c["number"] not in seen:
                         seen.add(c["number"])
                         unique_clauses.append(c)
-                
+
                 return unique_clauses[:100]  # Limit to first 100
-                
+
     except Exception as e:
         logger.error(f"Error fetching FAR index: {e}")
-    
+
     return clauses
 
 # ==================== Initialize Sample Data ====================
@@ -383,7 +383,7 @@ async def init_sample_clauses():
     count = await db.clauses.count_documents({})
     if count > 0:
         return
-    
+
     sample_clauses = [
         {
             "clause_id": str(uuid.uuid4()),
@@ -516,7 +516,7 @@ async def init_sample_clauses():
             "last_updated": datetime.now(timezone.utc).isoformat()
         }
     ]
-    
+
     await db.clauses.insert_many(sample_clauses)
     logger.info(f"Initialized {len(sample_clauses)} sample clauses")
 
@@ -533,19 +533,19 @@ async def create_session(request: SessionRequest, response: Response):
                 "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
                 headers={"X-Session-ID": request.session_id}
             )
-            
+
             if auth_response.status_code != 200:
                 raise HTTPException(status_code=401, detail="Invalid session")
-            
+
             auth_data = auth_response.json()
     except httpx.HTTPError as e:
         logger.error(f"Auth service error: {e}")
         raise HTTPException(status_code=500, detail="Authentication service unavailable")
-    
+
     # Find or create user
     user_id = f"user_{uuid.uuid4().hex[:12]}"
     existing_user = await db.users.find_one({"email": auth_data["email"]}, {"_id": 0})
-    
+
     if existing_user:
         user_id = existing_user["user_id"]
         await db.users.update_one(
@@ -561,11 +561,11 @@ async def create_session(request: SessionRequest, response: Response):
             "created_at": datetime.now(timezone.utc).isoformat()
         }
         await db.users.insert_one(new_user)
-    
+
     # Create session
     session_token = auth_data["session_token"]
     expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-    
+
     session_doc = {
         "session_id": str(uuid.uuid4()),
         "user_id": user_id,
@@ -574,7 +574,7 @@ async def create_session(request: SessionRequest, response: Response):
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.user_sessions.insert_one(session_doc)
-    
+
     # Set cookie
     response.set_cookie(
         key="session_token",
@@ -585,7 +585,7 @@ async def create_session(request: SessionRequest, response: Response):
         path="/",
         max_age=7 * 24 * 60 * 60
     )
-    
+
     user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     return user_doc
 
@@ -603,7 +603,7 @@ async def logout(request: Request, response: Response):
     session_token = request.cookies.get("session_token")
     if session_token:
         await db.user_sessions.delete_one({"session_token": session_token})
-    
+
     response.delete_cookie(key="session_token", path="/")
     return {"message": "Logged out successfully"}
 
@@ -613,10 +613,10 @@ async def logout(request: Request, response: Response):
 async def search_clauses(query: str, clause_type: Optional[str] = None, limit: int = 20):
     """Search clauses with optional AI enhancement"""
     filter_query = {}
-    
+
     if clause_type and clause_type != "All":
         filter_query["type"] = clause_type
-    
+
     # Text search on multiple fields
     if query:
         filter_query["$or"] = [
@@ -625,7 +625,7 @@ async def search_clauses(query: str, clause_type: Optional[str] = None, limit: i
             {"text": {"$regex": query, "$options": "i"}},
             {"keywords": {"$elemMatch": {"$regex": query, "$options": "i"}}}
         ]
-    
+
     clauses = await db.clauses.find(filter_query, {"_id": 0}).limit(limit).to_list(limit)
     return {"clauses": clauses, "total": len(clauses)}
 
@@ -635,15 +635,15 @@ async def ai_search_clauses(query: str, request: Request):
     user = await get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required for AI search")
-    
+
     # Get all clauses for context
     all_clauses = await db.clauses.find({}, {"_id": 0, "clause_id": 1, "number": 1, "title": 1, "type": 1, "summary": 1, "keywords": 1}).to_list(100)
-    
+
     clauses_context = "\n".join([
         f"- {c['number']}: {c['title']} ({c['type']}) - {c.get('summary', '')}"
         for c in all_clauses
     ])
-    
+
     prompt = f"""Based on the user's query, identify the most relevant FAR/DFARS clauses from this list:
 
 Available Clauses:
@@ -655,7 +655,7 @@ Return a JSON array of the most relevant clause numbers (e.g., ["52.212-4", "252
 {{"relevant_clauses": ["clause_number1", "clause_number2"], "explanations": {{"clause_number1": "reason", "clause_number2": "reason"}}}}"""
 
     ai_response = await get_ai_response(prompt)
-    
+
     # Parse AI response and get full clause details
     try:
         import json
@@ -672,7 +672,7 @@ Return a JSON array of the most relevant clause numbers (e.g., ["52.212-4", "252
     except:
         relevant_numbers = []
         explanations = {}
-    
+
     # Fetch full clause details
     clauses = []
     for number in relevant_numbers:
@@ -680,7 +680,7 @@ Return a JSON array of the most relevant clause numbers (e.g., ["52.212-4", "252
         if clause:
             clause["ai_explanation"] = explanations.get(number, "")
             clauses.append(clause)
-    
+
     return {
         "clauses": clauses,
         "ai_analysis": ai_response,
@@ -709,15 +709,15 @@ async def fetch_live_clause(clause_number: str, request: Request):
     user = await get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required to fetch live data")
-    
+
     # Check if we already have this clause
     existing = await db.clauses.find_one({"number": clause_number}, {"_id": 0})
     if existing and existing.get("source") == "acquisition.gov":
         return existing
-    
+
     # Fetch from acquisition.gov
     clause_data = await fetch_clause_from_acquisition_gov(clause_number)
-    
+
     if clause_data:
         # Store in database
         await db.clauses.update_one(
@@ -735,10 +735,10 @@ async def sync_clauses_from_acquisition_gov(request: Request):
     user = await get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
-    
+
     # Fetch FAR index
     far_clauses = await fetch_far_index()
-    
+
     synced_count = 0
     for clause_info in far_clauses:
         # Check if we already have this clause
@@ -761,7 +761,7 @@ async def sync_clauses_from_acquisition_gov(request: Request):
             }
             await db.clauses.insert_one(clause_doc)
             synced_count += 1
-    
+
     return {"message": f"Synced {synced_count} new clauses from acquisition.gov", "total_new": synced_count}
 
 # ==================== Contracts Routes ====================
@@ -770,10 +770,10 @@ async def sync_clauses_from_acquisition_gov(request: Request):
 async def upload_contract(request: Request, file: UploadFile = File(...)):
     """Upload and analyze a contract"""
     user = await require_auth(request)
-    
+
     content = await file.read()
     text_content = ""
-    
+
     # Try to extract text from PDF or treat as text
     if file.filename.endswith('.pdf'):
         try:
@@ -785,14 +785,14 @@ async def upload_contract(request: Request, file: UploadFile = File(...)):
             text_content = content.decode('utf-8', errors='ignore')
     else:
         text_content = content.decode('utf-8', errors='ignore')
-    
+
     # Find clause references in the contract
     all_clauses = await db.clauses.find({}, {"_id": 0, "number": 1}).to_list(1000)
     clauses_found = []
     for clause in all_clauses:
         if clause["number"] in text_content:
             clauses_found.append(clause["number"])
-    
+
     # Create contract record
     contract = Contract(
         user_id=user.user_id,
@@ -801,11 +801,11 @@ async def upload_contract(request: Request, file: UploadFile = File(...)):
         content=text_content[:50000],  # Limit stored content
         clauses_found=clauses_found
     )
-    
+
     contract_dict = contract.model_dump()
     contract_dict["created_at"] = contract_dict["created_at"].isoformat()
     await db.contracts.insert_one(contract_dict)
-    
+
     return ContractUploadResponse(
         contract_id=contract.contract_id,
         name=contract.name,
@@ -838,21 +838,21 @@ async def get_contract(contract_id: str, request: Request):
 async def analyze_contract(contract_id: str, request: Request):
     """AI-powered contract analysis against FAR/DFARS requirements"""
     user = await require_auth(request)
-    
+
     contract = await db.contracts.find_one(
         {"contract_id": contract_id, "user_id": user.user_id},
         {"_id": 0}
     )
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found")
-    
+
     # Get clause details for found clauses
     clauses_details = []
     for clause_num in contract.get("clauses_found", []):
         clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
         if clause:
             clauses_details.append(f"{clause['number']}: {clause['title']}")
-    
+
     prompt = f"""Analyze this government contract against FAR/DFARS requirements:
 
 Contract Content (excerpt):
@@ -871,7 +871,7 @@ Format as JSON:
 {{"missing_clauses": [], "compliance_gaps": [], "recommendations": [], "risk_level": "Medium", "summary": ""}}"""
 
     ai_response = await get_ai_response(prompt)
-    
+
     # Parse and store analysis
     try:
         import json
@@ -883,19 +883,19 @@ Format as JSON:
             analysis = {"raw_analysis": ai_response}
     except:
         analysis = {"raw_analysis": ai_response}
-    
+
     await db.contracts.update_one(
         {"contract_id": contract_id},
         {"$set": {"analysis_result": analysis}}
     )
-    
+
     return {"contract_id": contract_id, "analysis": analysis}
 
 @contracts_router.post("/compare")
 async def compare_contracts(contract_id_1: str, contract_id_2: str, request: Request):
     """Compare two contracts"""
     user = await require_auth(request)
-    
+
     contract1 = await db.contracts.find_one(
         {"contract_id": contract_id_1, "user_id": user.user_id},
         {"_id": 0}
@@ -904,10 +904,10 @@ async def compare_contracts(contract_id_1: str, contract_id_2: str, request: Req
         {"contract_id": contract_id_2, "user_id": user.user_id},
         {"_id": 0}
     )
-    
+
     if not contract1 or not contract2:
         raise HTTPException(status_code=404, detail="One or both contracts not found")
-    
+
     prompt = f"""Compare these two government contracts:
 
 Contract 1 ({contract1.get('name', 'Unknown')}):
@@ -928,7 +928,7 @@ Format as JSON:
 {{"only_in_contract_1": [], "only_in_contract_2": [], "common_clauses": [], "key_differences": [], "recommendations": []}}"""
 
     ai_response = await get_ai_response(prompt)
-    
+
     try:
         import json
         json_start = ai_response.find('{')
@@ -939,7 +939,7 @@ Format as JSON:
             comparison = {"raw_comparison": ai_response}
     except:
         comparison = {"raw_comparison": ai_response}
-    
+
     return {"comparison": comparison}
 
 # ==================== Flowdown Routes ====================
@@ -948,23 +948,23 @@ Format as JSON:
 async def analyze_flowdown(flowdown_request: FlowdownRequest, request: Request):
     """Analyze which clauses must flow down to subcontractors"""
     user = await require_auth(request)
-    
+
     # Get all flowdown-required clauses
     flowdown_clauses = await db.clauses.find(
         {"flowdown_required": True},
         {"_id": 0}
     ).to_list(100)
-    
+
     # Filter by threshold and contract type
     applicable_clauses = []
     for clause in flowdown_clauses:
         threshold = clause.get("threshold_amount", 0) or 0
         contract_types = clause.get("contract_types", [])
-        
+
         if flowdown_request.contract_value >= threshold:
             if "All" in contract_types or flowdown_request.contract_type in contract_types or not contract_types:
                 applicable_clauses.append(clause)
-    
+
     # Check which are in the provided clauses list
     in_contract = []
     missing = []
@@ -973,7 +973,7 @@ async def analyze_flowdown(flowdown_request: FlowdownRequest, request: Request):
             in_contract.append(clause)
         else:
             missing.append(clause)
-    
+
     return {
         "required_flowdown_clauses": [c["number"] for c in applicable_clauses],
         "present_in_contract": [c["number"] for c in in_contract],
@@ -1022,21 +1022,21 @@ async def get_favorites(request: Request):
         {"user_id": user.user_id},
         {"_id": 0}
     ).to_list(100)
-    
+
     # Get full clause details
     result = []
     for fav in favorites:
         clause = await db.clauses.find_one({"clause_id": fav["clause_id"]}, {"_id": 0})
         if clause:
             result.append({**fav, "clause": clause})
-    
+
     return {"favorites": result}
 
 @user_router.post("/favorites")
 async def add_favorite(clause_id: str, request: Request):
     """Add a clause to favorites"""
     user = await require_auth(request)
-    
+
     # Check if already favorited
     existing = await db.favorites.find_one(
         {"user_id": user.user_id, "clause_id": clause_id},
@@ -1044,7 +1044,7 @@ async def add_favorite(clause_id: str, request: Request):
     )
     if existing:
         return existing
-    
+
     favorite = Favorite(user_id=user.user_id, clause_id=clause_id)
     fav_dict = favorite.model_dump()
     fav_dict["created_at"] = fav_dict["created_at"].isoformat()
@@ -1069,7 +1069,7 @@ async def get_annotations(request: Request, clause_id: Optional[str] = None):
     filter_query = {"user_id": user.user_id}
     if clause_id:
         filter_query["clause_id"] = clause_id
-    
+
     annotations = await db.annotations.find(filter_query, {"_id": 0}).to_list(100)
     return {"annotations": annotations}
 
@@ -1104,26 +1104,26 @@ async def delete_annotation(annotation_id: str, request: Request):
 async def export_to_pdf(clauses: List[str], request: Request):
     """Export clauses to PDF"""
     user = await require_auth(request)
-    
+
     # Get clause details
     clause_docs = []
     for clause_num in clauses:
         clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
         if clause:
             clause_docs.append(clause)
-    
+
     # Generate PDF
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     styles = getSampleStyleSheet()
     story = []
-    
+
     # Title
     story.append(Paragraph("Federal Clause Report", styles['Title']))
     story.append(Spacer(1, 0.5*inch))
     story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal']))
     story.append(Spacer(1, 0.5*inch))
-    
+
     for clause in clause_docs:
         story.append(Paragraph(f"{clause['number']}: {clause['title']}", styles['Heading2']))
         story.append(Paragraph(f"Type: {clause['type']}", styles['Normal']))
@@ -1131,10 +1131,10 @@ async def export_to_pdf(clauses: List[str], request: Request):
         if clause.get('summary'):
             story.append(Paragraph(f"Summary: {clause['summary']}", styles['Normal']))
         story.append(Spacer(1, 0.3*inch))
-    
+
     doc.build(story)
     buffer.seek(0)
-    
+
     return StreamingResponse(
         buffer,
         media_type="application/pdf",
@@ -1147,14 +1147,14 @@ async def export_to_pdf(clauses: List[str], request: Request):
 async def generate_checklist(contract_id: str, request: Request):
     """Generate a compliance checklist for a contract"""
     user = await require_auth(request)
-    
+
     contract = await db.contracts.find_one(
         {"contract_id": contract_id, "user_id": user.user_id},
         {"_id": 0}
     )
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found")
-    
+
     # Get clause details
     checklist_items = []
     for clause_num in contract.get("clauses_found", []):
@@ -1167,17 +1167,17 @@ async def generate_checklist(contract_id: str, request: Request):
                 "status": "pending",
                 "notes": ""
             })
-    
+
     checklist = ComplianceChecklist(
         user_id=user.user_id,
         contract_id=contract_id,
         items=checklist_items
     )
-    
+
     checklist_dict = checklist.model_dump()
     checklist_dict["created_at"] = checklist_dict["created_at"].isoformat()
     await db.checklists.insert_one(checklist_dict)
-    
+
     return checklist_dict
 
 @api_router.get("/checklist/{checklist_id}")
@@ -1202,15 +1202,15 @@ async def update_checklist_item(
 ):
     """Update a checklist item status"""
     user = await require_auth(request)
-    
+
     result = await db.checklists.update_one(
         {"checklist_id": checklist_id, "user_id": user.user_id},
         {"$set": {f"items.{item_index}.status": status, f"items.{item_index}.notes": notes}}
     )
-    
+
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Checklist not found")
-    
+
     return {"message": "Checklist item updated"}
 
 # ==================== Root Route ====================
@@ -1223,7 +1223,7 @@ async def root():
 
 class AgiloftConfig(BaseModel):
     """Agiloft KB configuration"""
-    kb_url: str  # e.g., https://yourcompany.agiloft.com/ewws
+    kb_url: str  # e.g., https://yourcompany.agiloft.com/ewws/alrest/KBNAME  (must be the REST base you are using)
     username: str
     password: str
     kb_name: str = "Default"
@@ -1234,58 +1234,83 @@ class AgiloftSyncRequest(BaseModel):
     table_name: str = "Clauses"  # Default table name for clauses
     field_mapping: Dict[str, str] = {}  # Map Agiloft fields to our clause fields
 
+def _norm_agiloft_base(url: str) -> str:
+    return (url or "").strip().rstrip("/")
+
+async def agiloft_login(client: httpx.AsyncClient, config: AgiloftConfig) -> Dict[str, Any]:
+    """
+    Agiloft login helper.
+
+    Fixes:
+    - Uses $KB, $login, $password, $lang (as required by your KB error message)
+    - Does NOT treat HTTP 200 as success unless the body indicates success
+    """
+    kb_url = _norm_agiloft_base(config.kb_url)
+    login_url = f"{kb_url}/login"
+
+    payload = {
+        "$KB": config.kb_name,
+        "$login": config.username,
+        "$password": config.password,
+        "$lang": "en",
+    }
+
+    resp = await client.post(login_url, data=payload)
+    raw_text = resp.text or ""
+
+    try:
+        data = resp.json()
+    except Exception:
+        data = {"_raw": raw_text}
+
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=resp.status_code,
+            detail=f"Agiloft login HTTP {resp.status_code}: {raw_text[:300]}"
+        )
+
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=401, detail=f"Agiloft authentication failed: {raw_text[:300]}")
+
+    # Agiloft often returns success:false + errors even with 200.
+    if "success" in data and data.get("success") is False:
+        errors = data.get("errors") or []
+        if errors and isinstance(errors, list) and isinstance(errors[0], dict):
+            msg = errors[0].get("message", "Authentication failed")
+        else:
+            msg = "Authentication failed"
+        raise HTTPException(status_code=401, detail=f"Agiloft authentication failed: {msg}")
+
+    # Token variants
+    token = data.get("access_token") or data.get("token") or data.get("auth_token")
+
+    # If there's no token and not explicitly success:true, treat as failure
+    if not token and data.get("success") is not True:
+        raise HTTPException(status_code=401, detail=f"Agiloft authentication failed: {raw_text[:300]}")
+
+    return data
+
 @agiloft_router.post("/test-connection")
 async def test_agiloft_connection(config: AgiloftConfig, request: Request):
     """Test connection to Agiloft knowledge base"""
     user = await require_auth(request)
-    
+
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Agiloft REST API login endpoint
-            # Format: {base_url}/login?lang=en with JSON body
-            login_url = f"{config.kb_url}/login"
-            
-            response = await client.post(
-                login_url,
-                params={"lang": "en"},
-                json={
-                    "login": config.username,
-                    "password": config.password,
-                    "KB": config.kb_name
-                },
-                headers={"Content-Type": "application/json"}
-            )
-            
-            if response.status_code == 200:
-                try:
-                    result = response.json()
-                    # Agiloft returns a token on successful login
-                    if result.get("token") or result.get("success") or response.status_code == 200:
-                        return {
-                            "success": True,
-                            "message": "Successfully connected to Agiloft KB",
-                            "kb_name": config.kb_name,
-                            "token": result.get("token", "")[:20] + "..." if result.get("token") else None
-                        }
-                except:
-                    pass
-                
-                # Check if response indicates success
-                if "error" not in response.text.lower():
-                    return {
-                        "success": True,
-                        "message": "Successfully connected to Agiloft KB",
-                        "kb_name": config.kb_name
-                    }
-            
+            login_data = await agiloft_login(client, config)
+            token = login_data.get("access_token") or login_data.get("token") or login_data.get("auth_token")
+
             return {
-                "success": False,
-                "message": f"Connection failed with status {response.status_code}",
-                "details": response.text[:500] if response.text else "No response"
+                "success": True,
+                "message": "Successfully connected to Agiloft KB",
+                "kb_name": config.kb_name,
+                "token_preview": (token[:20] + "...") if token else None
             }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Agiloft connection error: {e}")
-        return {"success": False, "message": f"Connection error: {str(e)}"}
+        raise HTTPException(status_code=500, detail=f"Agiloft connection error: {str(e)}")
 
 @agiloft_router.post("/sync-clauses")
 async def sync_clauses_from_agiloft(sync_request: AgiloftSyncRequest, request: Request):
@@ -1302,64 +1327,41 @@ class AgiloftPushRequest(BaseModel):
 async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Request):
     """Push clauses from our database to Agiloft knowledge base"""
     user = await require_auth(request)
-    
+
     config = push_request.config
-    
+
     # Get clauses to push
     if push_request.source == "acquisition":
-        # Fetch fresh from acquisition.gov first
         far_clauses = await fetch_far_index()
         clauses_to_push = []
-        for clause_info in far_clauses[:50]:  # Limit to 50 for performance
+        for clause_info in far_clauses[:50]:
             clause_data = await fetch_clause_from_acquisition_gov(clause_info["number"])
             if clause_data:
                 clauses_to_push.append(clause_data)
     else:
-        # Use clauses from our database
         clauses_to_push = await db.clauses.find({}, {"_id": 0}).to_list(500)
-    
+
     if not clauses_to_push:
         return {"success": False, "message": "No clauses found to push"}
-    
+
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            # Login to Agiloft using REST API
-            login_url = f"{config.kb_url}/login"
-            login_response = await client.post(
-                login_url,
-                params={"lang": "en"},
-                json={
-                    "login": config.username,
-                    "password": config.password,
-                    "KB": config.kb_name
-                },
-                headers={"Content-Type": "application/json"}
-            )
-            
-            if login_response.status_code != 200:
-                return {"success": False, "message": "Agiloft authentication failed", "details": login_response.text[:200]}
-            
-            # Get token from response
-            try:
-                login_data = login_response.json()
-                token = login_data.get("token", "")
-            except:
-                token = ""
-            
-            auth_headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {token}" if token else ""
-            }
-            
+            login_data = await agiloft_login(client, config)
+            token = login_data.get("access_token") or login_data.get("token") or login_data.get("auth_token") or ""
+
+            auth_headers = {"Content-Type": "application/json"}
+            if token:
+                auth_headers["Authorization"] = f"Bearer {token}"
+
             created_count = 0
             updated_count = 0
-            
+
             for clause in clauses_to_push:
                 clause_data = {
                     "clause_number": clause.get("number", ""),
                     "clause_title": clause.get("title", ""),
                     "clause_type": clause.get("type", "FAR"),
-                    "clause_text": clause.get("text", "")[:32000],  # Agiloft field size limit
+                    "clause_text": clause.get("text", "")[:32000],
                     "clause_summary": clause.get("summary", ""),
                     "flowdown_required": "Yes" if clause.get("flowdown_required") else "No",
                     "threshold_amount": str(clause.get("threshold_amount", 0) or 0),
@@ -1367,10 +1369,9 @@ async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Req
                     "source_url": clause.get("source_url", ""),
                     "last_updated": datetime.now(timezone.utc).isoformat()
                 }
-                
+
                 try:
-                    # Search for existing clause
-                    search_url = f"{config.kb_url}/Clauses"
+                    search_url = f"{_norm_agiloft_base(config.kb_url)}/Clauses"
                     search_response = await client.get(
                         search_url,
                         params={
@@ -1379,7 +1380,7 @@ async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Req
                         },
                         headers=auth_headers
                     )
-                    
+
                     existing_records = []
                     if search_response.status_code == 200:
                         try:
@@ -1387,11 +1388,10 @@ async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Req
                             existing_records = search_data if isinstance(search_data, list) else search_data.get("records", [])
                         except:
                             pass
-                    
+
                     if existing_records:
-                        # Update existing record
                         record_id = existing_records[0].get("id", existing_records[0].get("$id"))
-                        update_url = f"{config.kb_url}/Clauses/{record_id}"
+                        update_url = f"{_norm_agiloft_base(config.kb_url)}/Clauses/{record_id}"
                         await client.put(
                             update_url,
                             params={"lang": "en"},
@@ -1400,8 +1400,7 @@ async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Req
                         )
                         updated_count += 1
                     else:
-                        # Create new record
-                        create_url = f"{config.kb_url}/Clauses"
+                        create_url = f"{_norm_agiloft_base(config.kb_url)}/Clauses"
                         await client.post(
                             create_url,
                             params={"lang": "en"},
@@ -1409,11 +1408,12 @@ async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Req
                             headers=auth_headers
                         )
                         created_count += 1
+
                 except Exception as e:
                     logger.error(f"Error pushing clause {clause.get('number')}: {e}")
-                    # Try to create anyway
+                    # Try create anyway (keeps your existing behavior)
                     try:
-                        create_url = f"{config.kb_url}/Clauses"
+                        create_url = f"{_norm_agiloft_base(config.kb_url)}/Clauses"
                         await client.post(
                             create_url,
                             params={"lang": "en"},
@@ -1423,7 +1423,7 @@ async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Req
                         created_count += 1
                     except:
                         pass
-            
+
             return {
                 "success": True,
                 "message": f"Pushed {created_count + updated_count} clauses to Agiloft",
@@ -1431,7 +1431,9 @@ async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Req
                 "created_count": created_count,
                 "updated_count": updated_count
             }
-            
+
+    except HTTPException as e:
+        return {"success": False, "message": str(e.detail)}
     except Exception as e:
         logger.error(f"Agiloft push error: {e}")
         return {"success": False, "message": f"Push failed: {str(e)}"}
@@ -1445,25 +1447,14 @@ class AgiloftContractsRequest(BaseModel):
 async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, request: Request):
     """Fetch contracts from Agiloft for analysis"""
     user = await require_auth(request)
-    
+
     config = contracts_request.config
-    
+
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # Login using REST API
-            login_response = await client.post(
-                f"{config.kb_url}/login",
-                params={"lang": "en"},
-                json={
-                    "login": config.username,
-                    "password": config.password,
-                    "KB": config.kb_name
-                },
-                headers={"Content-Type": "application/json"}
-            )
-            
-            if login_response.status_code != 200:
-                # Return demo data if login fails
+            try:
+                login_data = await agiloft_login(client, config)
+            except HTTPException:
                 logger.info("Agiloft login failed, returning demo contracts")
                 return {
                     "success": True,
@@ -1477,7 +1468,7 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
                             "status": "Active"
                         },
                         {
-                            "id": "demo-2", 
+                            "id": "demo-2",
                             "name": "IT Services Agreement",
                             "type": "Time-and-Materials",
                             "value": 750000,
@@ -1495,38 +1486,30 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
                     ],
                     "note": "Using demo data - Agiloft connection not established"
                 }
-            
-            # Get token from response
-            try:
-                login_data = login_response.json()
-                token = login_data.get("token", "")
-            except:
-                token = ""
-            
-            auth_headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {token}" if token else ""
-            }
-            
-            # Search for contracts using REST API
-            contracts_url = f"{config.kb_url}/{contracts_request.table_name}"
+
+            token = login_data.get("access_token") or login_data.get("token") or login_data.get("auth_token") or ""
+            auth_headers = {"Content-Type": "application/json"}
+            if token:
+                auth_headers["Authorization"] = f"Bearer {token}"
+
+            contracts_url = f"{_norm_agiloft_base(config.kb_url)}/{contracts_request.table_name}"
             search_response = await client.get(
                 contracts_url,
                 params={"lang": "en"},
                 headers=auth_headers
             )
-            
+
             contracts = []
-            
+
             if search_response.status_code == 200:
                 try:
                     data = search_response.json()
                     records = data if isinstance(data, list) else data.get("records", data.get("result", []))
-                    
+
                     for record in records:
                         clauses_str = record.get("clauses", record.get("contract_clauses", ""))
                         clauses = [c.strip() for c in clauses_str.split(",") if c.strip()] if clauses_str else []
-                        
+
                         contracts.append({
                             "id": str(record.get("id", record.get("$id", uuid.uuid4()))),
                             "name": record.get("name", record.get("contract_name", "Unnamed Contract")),
@@ -1537,8 +1520,7 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
                         })
                 except Exception as e:
                     logger.error(f"Error parsing Agiloft contracts: {e}")
-            
-            # Return demo data if no contracts found
+
             if not contracts:
                 contracts = [
                     {
@@ -1550,7 +1532,7 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
                         "status": "Active"
                     },
                     {
-                        "id": "demo-2", 
+                        "id": "demo-2",
                         "name": "IT Services Agreement",
                         "type": "Time-and-Materials",
                         "value": 750000,
@@ -1566,9 +1548,9 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
                         "status": "Active"
                     }
                 ]
-            
+
             return {"success": True, "contracts": contracts}
-            
+
     except Exception as e:
         logger.error(f"Agiloft contracts error: {e}")
         return {"success": False, "message": str(e)}
@@ -1585,54 +1567,46 @@ class AgiloftAnalyzeRequest(BaseModel):
 async def analyze_agiloft_contract(analyze_request: AgiloftAnalyzeRequest, request: Request):
     """Analyze an Agiloft contract for clause compliance"""
     user = await require_auth(request)
-    
+
     contract_clauses = analyze_request.contract_clauses
     contract_type = analyze_request.contract_type
     contract_value = analyze_request.contract_value
-    
-    # Get all required clauses from our database
+
     all_clauses = await db.clauses.find({}, {"_id": 0}).to_list(500)
-    
-    # Get flowdown-required clauses
     flowdown_clauses = [c for c in all_clauses if c.get("flowdown_required")]
-    
-    # Determine which are applicable based on contract type and value
+
     applicable_flowdown = []
     for clause in flowdown_clauses:
         threshold = clause.get("threshold_amount", 0) or 0
         contract_types = clause.get("contract_types", [])
-        
+
         if contract_value >= threshold:
             if "All" in contract_types or contract_type in contract_types or not contract_types:
                 applicable_flowdown.append(clause["number"])
-    
-    # Analyze contract clauses
+
     correct_clauses = []
     missing_clauses = []
     needs_update = []
-    
-    # Check which standard clauses are present
+
     all_clause_numbers = [c["number"] for c in all_clauses]
-    
+
     for clause_num in contract_clauses:
         if clause_num in all_clause_numbers:
             correct_clauses.append(clause_num)
         else:
-            needs_update.append(clause_num)  # Unknown clause
-    
-    # Check for missing required flowdown clauses
+            needs_update.append(clause_num)
+
     for required in applicable_flowdown:
         if required not in contract_clauses:
             missing_clauses.append(required)
-    
-    # Determine compliance status
+
     if missing_clauses:
         compliance_status = "non-compliant"
     elif needs_update:
         compliance_status = "warning"
     else:
         compliance_status = "compliant"
-    
+
     return {
         "success": True,
         "contract_id": analyze_request.contract_id,
@@ -1642,9 +1616,7 @@ async def analyze_agiloft_contract(analyze_request: AgiloftAnalyzeRequest, reque
         "needs_update": needs_update,
         "required_flowdown": applicable_flowdown,
         "total_checked": len(contract_clauses),
-        "recommendations": [
-            f"Add missing clause {c}" for c in missing_clauses[:5]
-        ]
+        "recommendations": [f"Add missing clause {c}" for c in missing_clauses[:5]]
     }
 
 class AgiloftUpdateRequest(BaseModel):
@@ -1657,63 +1629,41 @@ class AgiloftUpdateRequest(BaseModel):
 async def update_agiloft_contract(update_request: AgiloftUpdateRequest, request: Request):
     """Update a contract in Agiloft with compliance fixes"""
     user = await require_auth(request)
-    
+
     config = update_request.config
-    
+
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # Login using REST API
-            login_response = await client.post(
-                f"{config.kb_url}/login",
-                params={"lang": "en"},
-                json={
-                    "login": config.username,
-                    "password": config.password,
-                    "KB": config.kb_name
-                },
-                headers={"Content-Type": "application/json"}
-            )
-            
-            # Get token
-            token = ""
-            if login_response.status_code == 200:
-                try:
-                    login_data = login_response.json()
-                    token = login_data.get("token", "")
-                except:
-                    pass
-            
-            auth_headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {token}" if token else ""
-            }
-            
-            # Build update data
+            login_data = await agiloft_login(client, config)
+            token = login_data.get("access_token") or login_data.get("token") or login_data.get("auth_token") or ""
+
+            auth_headers = {"Content-Type": "application/json"}
+            if token:
+                auth_headers["Authorization"] = f"Bearer {token}"
+
             update_data = {}
-            
-            # Add missing clauses to the contract
+
             missing = update_request.updates.get("missing_clauses", [])
             flowdown = update_request.updates.get("flowdown_clauses", [])
-            
+
             if missing:
                 update_data["missing_clauses_flag"] = "Yes"
                 update_data["missing_clauses_list"] = ", ".join(missing)
-            
+
             if flowdown:
                 update_data["flowdown_clauses"] = ", ".join(flowdown)
-            
+
             update_data["compliance_checked"] = datetime.now(timezone.utc).isoformat()
             update_data["compliance_checker"] = user.name
-            
-            # Update in Agiloft using REST API
-            update_url = f"{config.kb_url}/Contracts/{update_request.contract_id}"
+
+            update_url = f"{_norm_agiloft_base(config.kb_url)}/Contracts/{update_request.contract_id}"
             update_response = await client.put(
                 update_url,
                 params={"lang": "en"},
                 json=update_data,
                 headers=auth_headers
             )
-            
+
             if update_response.status_code == 200:
                 return {
                     "success": True,
@@ -1721,13 +1671,15 @@ async def update_agiloft_contract(update_request: AgiloftUpdateRequest, request:
                     "updated_fields": list(update_data.keys())
                 }
             else:
-                # For demo purposes, return success
                 return {
                     "success": True,
                     "message": "Contract flagged for update (demo mode)",
                     "note": "In production, this would update the Agiloft record"
                 }
-            
+
+    except HTTPException as e:
+        logger.error(f"Agiloft update auth error: {e.detail}")
+        return {"success": False, "message": str(e.detail)}
     except Exception as e:
         logger.error(f"Agiloft update error: {e}")
         return {"success": False, "message": str(e)}
@@ -1746,47 +1698,40 @@ class BatchExportRequest(BaseModel):
 async def batch_export(export_request: BatchExportRequest, request: Request):
     """Batch export multiple clauses to PDF, JSON, or CSV"""
     user = await require_auth(request)
-    
-    # Collect all clauses
+
     clause_docs = []
-    
-    # By number
+
     for clause_num in export_request.clause_numbers:
         clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
         if clause:
             clause_docs.append(clause)
-    
-    # By ID
+
     for clause_id in export_request.clause_ids:
         clause = await db.clauses.find_one({"clause_id": clause_id}, {"_id": 0})
         if clause and clause not in clause_docs:
             clause_docs.append(clause)
-    
+
     if not clause_docs:
         raise HTTPException(status_code=404, detail="No clauses found for export")
-    
+
     if export_request.format == "json":
-        # Return as JSON
         return {
             "export_date": datetime.now(timezone.utc).isoformat(),
             "total_clauses": len(clause_docs),
             "clauses": clause_docs
         }
-    
+
     elif export_request.format == "csv":
-        # Generate CSV
         import csv
-        
+
         buffer = io.StringIO()
         writer = csv.writer(buffer)
-        
-        # Header
+
         headers = ["Number", "Title", "Type", "Flowdown Required"]
         if export_request.include_full_text:
             headers.append("Text")
         writer.writerow(headers)
-        
-        # Data rows
+
         for clause in clause_docs:
             row = [
                 clause.get("number", ""),
@@ -1795,22 +1740,21 @@ async def batch_export(export_request: BatchExportRequest, request: Request):
                 "Yes" if clause.get("flowdown_required") else "No"
             ]
             if export_request.include_full_text:
-                row.append(clause.get("text", "")[:5000])  # Limit text in CSV
+                row.append(clause.get("text", "")[:5000])
             writer.writerow(row)
-        
+
         csv_content = buffer.getvalue()
-        
+
         return StreamingResponse(
             io.BytesIO(csv_content.encode('utf-8')),
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=clauses_export.csv"}
         )
-    
-    else:  # PDF
-        # Generate comprehensive PDF
+
+    else:
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(
-            buffer, 
+            buffer,
             pagesize=letter,
             rightMargin=72,
             leftMargin=72,
@@ -1818,80 +1762,71 @@ async def batch_export(export_request: BatchExportRequest, request: Request):
             bottomMargin=72
         )
         styles = getSampleStyleSheet()
-        
-        # Custom styles
+
         title_style = styles['Title']
         heading_style = styles['Heading2']
         normal_style = styles['Normal']
-        
+
         story = []
-        
-        # Title page
+
         story.append(Paragraph("Federal Clause Export Report", title_style))
         story.append(Spacer(1, 0.3*inch))
         story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", normal_style))
         story.append(Paragraph(f"Total Clauses: {len(clause_docs)}", normal_style))
         story.append(Paragraph(f"Exported by: {user.name}", normal_style))
         story.append(Spacer(1, 0.5*inch))
-        
-        # Table of Contents
+
         story.append(Paragraph("Table of Contents", heading_style))
         story.append(Spacer(1, 0.2*inch))
         for i, clause in enumerate(clause_docs, 1):
             story.append(Paragraph(f"{i}. {clause.get('number', 'N/A')} - {clause.get('title', 'Untitled')}", normal_style))
         story.append(Spacer(1, 0.5*inch))
-        
-        # Clause details
+
         for clause in clause_docs:
             story.append(Paragraph(f"{clause.get('number', 'N/A')}", heading_style))
             story.append(Paragraph(f"<b>{clause.get('title', 'Untitled')}</b>", normal_style))
             story.append(Spacer(1, 0.1*inch))
-            
-            # Metadata
+
             story.append(Paragraph(f"<b>Type:</b> {clause.get('type', 'N/A')}", normal_style))
-            
+
             if export_request.include_flowdown_info:
                 flowdown = "Yes" if clause.get('flowdown_required') else "No"
                 story.append(Paragraph(f"<b>Flowdown Required:</b> {flowdown}", normal_style))
-                
+
                 if clause.get('threshold_amount'):
                     story.append(Paragraph(f"<b>Threshold:</b> ${clause['threshold_amount']:,.0f}", normal_style))
-                
+
                 if clause.get('contract_types'):
                     story.append(Paragraph(f"<b>Contract Types:</b> {', '.join(clause['contract_types'])}", normal_style))
-            
+
             if clause.get('source'):
                 story.append(Paragraph(f"<b>Source:</b> {clause['source']}", normal_style))
-            
+
             story.append(Spacer(1, 0.2*inch))
-            
-            # Summary
+
             if clause.get('summary'):
                 story.append(Paragraph("<b>Summary:</b>", normal_style))
                 story.append(Paragraph(clause['summary'], normal_style))
                 story.append(Spacer(1, 0.1*inch))
-            
-            # Full text
+
             if export_request.include_full_text and clause.get('text'):
                 story.append(Paragraph("<b>Full Text:</b>", normal_style))
-                # Split long text into paragraphs
-                text = clause['text'][:10000]  # Limit text length
+                text = clause['text'][:10000]
                 for para in text.split('\n\n'):
                     if para.strip():
                         story.append(Paragraph(para.strip(), normal_style))
                         story.append(Spacer(1, 0.1*inch))
-            
-            # Keywords
+
             if clause.get('keywords'):
                 story.append(Paragraph(f"<b>Keywords:</b> {', '.join(clause['keywords'])}", normal_style))
-            
+
             story.append(Spacer(1, 0.4*inch))
-        
+
         doc.build(story)
         buffer.seek(0)
-        
+
         filename = f"clause_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-        
+
         return StreamingResponse(
             buffer,
             media_type="application/pdf",
@@ -1908,66 +1843,60 @@ class FlowdownReportRequest(BaseModel):
 async def export_flowdown_report(report_request: FlowdownReportRequest, request: Request):
     """Export a flowdown analysis report as PDF"""
     user = await require_auth(request)
-    
+
     contract_type = report_request.contract_type
     contract_value = report_request.contract_value
     clauses = report_request.clauses
-    
-    # Run flowdown analysis
+
     flowdown_clauses = await db.clauses.find(
         {"flowdown_required": True},
         {"_id": 0}
     ).to_list(100)
-    
+
     applicable = []
     for clause in flowdown_clauses:
         threshold = clause.get("threshold_amount", 0) or 0
         contract_types = clause.get("contract_types", [])
-        
+
         if contract_value >= threshold:
             if "All" in contract_types or contract_type in contract_types or not contract_types:
                 applicable.append(clause)
-    
+
     present = [c for c in applicable if c["number"] in clauses]
     missing = [c for c in applicable if c["number"] not in clauses]
-    
-    # Generate PDF report
+
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     styles = getSampleStyleSheet()
     story = []
-    
-    # Title
+
     story.append(Paragraph("Flowdown Analysis Report", styles['Title']))
     story.append(Spacer(1, 0.3*inch))
     story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal']))
     story.append(Paragraph(f"Contract Type: {contract_type}", styles['Normal']))
     story.append(Paragraph(f"Contract Value: ${contract_value:,.2f}", styles['Normal']))
     story.append(Spacer(1, 0.5*inch))
-    
-    # Summary
+
     story.append(Paragraph("Summary", styles['Heading2']))
     story.append(Paragraph(f"Total Required Flowdown Clauses: {len(applicable)}", styles['Normal']))
     story.append(Paragraph(f"Present in Contract: {len(present)}", styles['Normal']))
     story.append(Paragraph(f"Missing from Contract: {len(missing)}", styles['Normal']))
     story.append(Spacer(1, 0.3*inch))
-    
-    # Missing clauses (critical)
+
     if missing:
         story.append(Paragraph("MISSING CLAUSES (Action Required)", styles['Heading2']))
         for clause in missing:
             story.append(Paragraph(f"• {clause['number']}: {clause['title']}", styles['Normal']))
         story.append(Spacer(1, 0.3*inch))
-    
-    # Present clauses
+
     if present:
         story.append(Paragraph("Compliant Clauses", styles['Heading2']))
         for clause in present:
             story.append(Paragraph(f"✓ {clause['number']}: {clause['title']}", styles['Normal']))
-    
+
     doc.build(story)
     buffer.seek(0)
-    
+
     return StreamingResponse(
         buffer,
         media_type="application/pdf",
@@ -2000,3 +1929,4 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+
