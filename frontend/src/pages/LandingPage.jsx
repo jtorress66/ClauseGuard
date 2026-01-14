@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, FileText, Download, BookOpen, Users, ArrowRight, CheckCircle } from "lucide-react";
+import { Search, FileText, Download, BookOpen, Users, ArrowRight, CheckCircle, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ClauseGuardLogo } from "@/components/ClauseGuardLogo";
