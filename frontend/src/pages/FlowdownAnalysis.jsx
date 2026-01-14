@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { 
-  ArrowLeft, Shield, Download, AlertTriangle, CheckCircle, 
+  ArrowLeft, Download, AlertTriangle, CheckCircle, 
   Info, ChevronDown, ChevronUp, FileText
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { API } from "@/App";
+import { ClauseGuardLogo } from "@/components/ClauseGuardLogo";
 
 export default function FlowdownAnalysis({ user }) {
   const navigate = useNavigate();
@@ -127,7 +128,7 @@ export default function FlowdownAnalysis({ user }) {
               <ArrowLeft className="w-5 h-5" />
             </Button>
             <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate("/")}>
-              <img src="https://customer-assets.emergentagent.com/job_f0e5b629-8260-447a-b845-dab293529025/artifacts/gvlwnwlo_image.png" alt="ClauseGuard" className="w-7 h-7" />
+              <ClauseGuardLogo className="w-7 h-7" variant="light" />
               <span className="font-heading font-bold text-lg text-navy-900">ClauseGuard</span>
             </div>
           </div>
