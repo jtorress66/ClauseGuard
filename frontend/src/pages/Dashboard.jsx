@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { 
   Search, FileText, Download, LogOut, Star, 
   Clock, Upload, ChevronRight, BarChart3, BookOpen, 
-  Bell, Settings, Plus, Trash2
+  Bell, Settings, Plus, Trash2, Database
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -112,7 +112,9 @@ export default function Dashboard({ user }) {
     { icon: Search, label: "AI Clause Search", onClick: () => navigate("/search?ai=true"), color: "bg-teal-600" },
     { icon: Upload, label: "Upload Contract", onClick: () => navigate("/upload"), color: "bg-navy-700" },
     { icon: Download, label: "Flowdown Analysis", onClick: () => navigate("/flowdown"), color: "bg-amber-600" },
-    { icon: FileText, label: "Compare Contracts", onClick: () => navigate("/compare"), color: "bg-purple-600" }
+    { icon: FileText, label: "Compare Contracts", onClick: () => navigate("/compare"), color: "bg-purple-600" },
+    { icon: BarChart3, label: "Batch Export", onClick: () => navigate("/export"), color: "bg-blue-600" },
+    { icon: Database, label: "Agiloft Sync", onClick: () => navigate("/agiloft"), color: "bg-slate-600" }
   ];
 
   return (
