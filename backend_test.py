@@ -150,6 +150,52 @@ class FederalClauseAPITester:
         # Test comparison endpoint (requires auth and contract IDs)
         self.run_test("Contract Comparison (Unauth)", "POST", "api/contracts/compare?contract_id_1=test1&contract_id_2=test2", 401)
 
+    def test_batch_export_endpoints(self):
+        """Test new batch export endpoints"""
+        print("\n📦 Testing batch export endpoints...")
+        
+        # Test batch export endpoint (requires auth)
+        export_data = {
+            "clause_numbers": ["52.212-4", "252.204-7012"],
+            "clause_ids": [],
+            "include_full_text": True,
+            "include_flowdown_info": True,
+            "format": "pdf"
+        }
+        self.run_test("Batch Export PDF (Unauth)", "POST", "api/export/batch", 401, export_data)
+        
+        # Test flowdown report export (requires auth)
+        flowdown_data = {
+            "contract_type": "Fixed-Price",
+            "contract_value": 1000000,
+            "clauses": ["52.212-4", "252.204-7012"]
+        }
+        self.run_test("Flowdown Report Export (Unauth)", "POST", "api/export/flowdown-report", 401, flowdown_data)
+
+    def test_agiloft_integration_endpoints(self):
+        """Test Agiloft integration endpoints"""
+        print("\n🔗 Testing Agiloft integration endpoints...")
+        
+        # Test connection endpoint (requires auth)
+        agiloft_config = {
+            "kb_url": "https://test.agiloft.com/ewws",
+            "username": "test_user",
+            "password": "test_pass",
+            "kb_name": "Default"
+        }
+        self.run_test("Agiloft Test Connection (Unauth)", "POST", "api/agiloft/test-connection", 401, agiloft_config)
+        
+        # Test sync clauses endpoint (requires auth)
+        sync_data = {
+            "config": agiloft_config,
+            "table_name": "Clauses",
+            "field_mapping": {}
+        }
+        self.run_test("Agiloft Sync Clauses (Unauth)", "POST", "api/agiloft/sync-clauses", 401, sync_data)
+        
+        # Test get tables endpoint (requires auth)
+        self.run_test("Agiloft Get Tables (Unauth)", "GET", "api/agiloft/tables?kb_url=https://test.agiloft.com/ewws&username=test&password=test", 401)
+
     def test_authenticated_endpoints(self):
         """Test endpoints that require authentication"""
         print("\n📝 Testing authenticated endpoints (will fail without session)...")
