@@ -133,6 +133,23 @@ class FederalClauseAPITester:
         self.log_test("Test Session Setup", False, "Auth requires manual OAuth flow - see auth_testing.md")
         return False
 
+    def test_new_acquisition_gov_endpoints(self):
+        """Test new acquisition.gov integration endpoints"""
+        print("\n🌐 Testing acquisition.gov integration endpoints...")
+        
+        # Test sync endpoint (requires auth)
+        self.run_test("Sync from acquisition.gov (Unauth)", "POST", "api/clauses/sync-from-acquisition-gov", 401)
+        
+        # Test fetch live endpoint (requires auth)
+        self.run_test("Fetch Live Clause (Unauth)", "GET", "api/clauses/fetch-live/52.212-4", 401)
+
+    def test_contract_comparison_endpoint(self):
+        """Test contract comparison endpoint"""
+        print("\n📊 Testing contract comparison endpoint...")
+        
+        # Test comparison endpoint (requires auth and contract IDs)
+        self.run_test("Contract Comparison (Unauth)", "POST", "api/contracts/compare?contract_id_1=test1&contract_id_2=test2", 401)
+
     def test_authenticated_endpoints(self):
         """Test endpoints that require authentication"""
         print("\n📝 Testing authenticated endpoints (will fail without session)...")
@@ -143,6 +160,10 @@ class FederalClauseAPITester:
         self.test_ai_search_unauthenticated()
         self.test_contracts_unauthenticated()
         self.test_flowdown_unauthenticated()
+        
+        # Test new endpoints
+        self.test_new_acquisition_gov_endpoints()
+        self.test_contract_comparison_endpoint()
         
         # Test user endpoints
         self.run_test("Get Favorites (Unauth)", "GET", "api/user/favorites", 401)
