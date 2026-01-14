@@ -649,6 +649,67 @@ async def get_clause_by_number(clause_number: str):
         raise HTTPException(status_code=404, detail="Clause not found")
     return clause
 
+@clauses_router.get("/fetch-live/{clause_number:path}")
+async def fetch_live_clause(clause_number: str, request: Request):
+    """Fetch a clause directly from acquisition.gov and store it"""
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required to fetch live data")
+    
+    # Check if we already have this clause
+    existing = await db.clauses.find_one({"number": clause_number}, {"_id": 0})
+    if existing and existing.get("source") == "acquisition.gov":
+        return existing
+    
+    # Fetch from acquisition.gov
+    clause_data = await fetch_clause_from_acquisition_gov(clause_number)
+    
+    if clause_data:
+        # Store in database
+        await db.clauses.update_one(
+            {"number": clause_number},
+            {"$set": clause_data},
+            upsert=True
+        )
+        return clause_data
+    else:
+        raise HTTPException(status_code=404, detail=f"Could not fetch clause {clause_number} from acquisition.gov")
+
+@clauses_router.post("/sync-from-acquisition-gov")
+async def sync_clauses_from_acquisition_gov(request: Request):
+    """Sync clause index from acquisition.gov"""
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    # Fetch FAR index
+    far_clauses = await fetch_far_index()
+    
+    synced_count = 0
+    for clause_info in far_clauses:
+        # Check if we already have this clause
+        existing = await db.clauses.find_one({"number": clause_info["number"]})
+        if not existing:
+            # Create basic entry
+            clause_doc = {
+                "clause_id": str(uuid.uuid4()),
+                "number": clause_info["number"],
+                "title": clause_info["title"],
+                "type": clause_info["type"],
+                "text": f"Full text available at acquisition.gov. Search for {clause_info['number']}",
+                "summary": None,
+                "flowdown_required": False,
+                "contract_types": [],
+                "threshold_amount": None,
+                "keywords": [],
+                "last_updated": datetime.now(timezone.utc).isoformat(),
+                "source": "acquisition.gov-index"
+            }
+            await db.clauses.insert_one(clause_doc)
+            synced_count += 1
+    
+    return {"message": f"Synced {synced_count} new clauses from acquisition.gov", "total_new": synced_count}
+
 # ==================== Contracts Routes ====================
 
 @contracts_router.post("/upload")
