@@ -36,6 +36,8 @@ clauses_router = APIRouter(prefix="/api/clauses")
 contracts_router = APIRouter(prefix="/api/contracts")
 flowdown_router = APIRouter(prefix="/api/flowdown")
 user_router = APIRouter(prefix="/api/user")
+agiloft_router = APIRouter(prefix="/api/agiloft")
+export_router = APIRouter(prefix="/api/export")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
