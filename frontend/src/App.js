@@ -12,6 +12,8 @@ import ContractUpload from "@/pages/ContractUpload";
 import FlowdownAnalysis from "@/pages/FlowdownAnalysis";
 import ContractDetail from "@/pages/ContractDetail";
 import ContractComparison from "@/pages/ContractComparison";
+import AgiloftIntegration from "@/pages/AgiloftIntegration";
+import BatchExport from "@/pages/BatchExport";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
@@ -172,6 +174,22 @@ function AppRouter() {
         element={
           <ProtectedRoute>
             {({ user }) => <ContractComparison user={user} />}
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/agiloft"
+        element={
+          <ProtectedRoute>
+            {({ user }) => <AgiloftIntegration user={user} />}
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/export"
+        element={
+          <ProtectedRoute>
+            {({ user }) => <BatchExport user={user} />}
           </ProtectedRoute>
         }
       />
