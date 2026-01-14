@@ -1,0 +1,102 @@
+{
+  "identity": {
+    "persona": "E1",
+    "tone": "Authoritative, Secure, Efficient, 'The Iron Man of Law'",
+    "visual_mood": "Deep Navy/Teal (Trust), Sharp White (Clarity), Subtle Gold/Bronze accents"
+  },
+  "typography": {
+    "headings": {
+      "family": "Chivo, sans-serif",
+      "weights": ["300", "400", "700", "900"],
+      "usage": "All headings (H1-H6). Use 'Black' (900) for Hero titles, 'Regular' (400) for section headers."
+    },
+    "body": {
+      "family": "IBM Plex Sans, sans-serif",
+      "weights": ["400", "500", "600"],
+      "usage": "Body text, UI elements, buttons, inputs."
+    },
+    "mono": {
+      "family": "JetBrains Mono, monospace",
+      "usage": "Code snippets, clause references, contract IDs."
+    },
+    "cdn_imports": [
+      "https://fonts.googleapis.com/css2?family=Chivo:wght@300;400;700;900&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+    ]
+  },
+  "colors": {
+    "palette": {
+      "primary": {
+        "DEFAULT": "#0F766E",
+        "foreground": "#FFFFFF",
+        "hover": "#115E59"
+      },
+      "secondary": {
+        "DEFAULT": "#0F172A",
+        "foreground": "#FFFFFF"
+      },
+      "accent": {
+        "DEFAULT": "#F59E0B",
+        "foreground": "#000000"
+      },
+      "background": {
+        "light": "#F8FAFC",
+        "dark": "#020617"
+      },
+      "surface": {
+        "light": "#FFFFFF",
+        "dark": "#1E293B"
+      }
+    },
+    "gradients": {
+      "hero": "bg-gradient-to-br from-slate-900 via-slate-800 to-teal-900",
+      "card_hover": "hover:bg-gradient-to-br hover:from-white hover:to-slate-50"
+    }
+  },
+  "layout": {
+    "spacing_scale": "p-1, p-2, p-4, p-6, p-8, p-12, p-16, p-20, p-24, p-32",
+    "container_padding": "px-6 md:px-12 lg:px-24",
+    "grids": {
+      "marketing": "grid-cols-1 md:grid-cols-8 lg:grid-cols-12 gap-8",
+      "dashboard": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6"
+    },
+    "border_radius": {
+      "default": "rounded-lg",
+      "card": "rounded-xl",
+      "button": "rounded-md"
+    }
+  },
+  "components": {
+    "strategy": "Hybrid",
+    "rules": [
+      "Use Shadcn/UI for functional components (Forms, Dialogs, Dropdowns, Tables).",
+      "Use Custom HTML/Tailwind for Marketing/Hero sections.",
+      "Do NOT use 'Card' component for marketing layouts; use raw divs with borders.",
+      "Buttons must have specific interaction states (transform, shadow)."
+    ],
+    "specifics": {
+      "buttons": "h-10 px-6 font-medium transition-all active:scale-95 hover:shadow-lg",
+      "inputs": "bg-background border-input focus:ring-2 focus:ring-primary/20",
+      "cards": "bg-card border border-border/40 shadow-sm hover:shadow-md transition-shadow"
+    }
+  },
+  "assets": {
+    "images": {
+      "hero_bg": "https://images.unsplash.com/photo-1746470427686-4c3551f3d689?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "feature_1": "https://images.unsplash.com/photo-1657727534676-cac1bb160d64?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "feature_2": "https://images.unsplash.com/photo-1667430806405-70ef5bc4970f?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "abstract_network": "https://images.unsplash.com/photo-1760112982249-2ac83f3a27aa?crop=entropy&cs=srgb&fm=jpg&q=85"
+    },
+    "icons": "lucide-react"
+  },
+  "universal_guidelines": [
+    "Do NOT use generic centered layouts.",
+    "Use 2-3x more spacing than typical designs.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Every interaction needs micro-animations.",
+    "All interactive elements MUST include data-testid attribute.",
+    "Use 'sonner' for toasts.",
+    "Components MUST use named exports.",
+    "Pages MUST use default exports."
+  ],
+  "instructions_to_main_agent": "You are building a Federal Clause Management App. Follow the 'Hybrid' theme: Dark Hero (Teal/Navy) -> Light Content. Use the provided image URLs for the landing page. Ensure the dashboard is dense ('Control Room' grid) but legible. Use 'Chivo' for headings and 'IBM Plex Sans' for body."
+}
