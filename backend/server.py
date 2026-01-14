@@ -1659,14 +1659,6 @@ async def update_agiloft_contract(update_request: AgiloftUpdateRequest, request:
         return {"success": False, "message": str(e)}
 
 # ==================== Batch Export Routes ====================
-                    return {"tables": [], "message": "Could not parse table list"}
-            
-            return {"tables": []}
-    except Exception as e:
-        logger.error(f"Agiloft tables error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ==================== Batch Export Routes ====================
 
 class BatchExportRequest(BaseModel):
     """Request for batch export"""
