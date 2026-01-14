@@ -1,0 +1,89 @@
+{
+  "summary": {
+    "total_tests": 13,
+    "passed_tests": 13,
+    "failed_tests": 0,
+    "success_rate": "100.0%"
+  },
+  "test_results": [
+    {
+      "test_name": "Root API",
+      "success": true,
+      "details": "Status: 200, Response keys: ['message', 'version']",
+      "timestamp": "2026-01-14T13:31:02.764433"
+    },
+    {
+      "test_name": "Basic Clause Search",
+      "success": true,
+      "details": "Status: 200, Response keys: ['clauses', 'total']",
+      "timestamp": "2026-01-14T13:31:02.800688"
+    },
+    {
+      "test_name": "Clause Search with Type",
+      "success": true,
+      "details": "Status: 200, Response keys: ['clauses', 'total']",
+      "timestamp": "2026-01-14T13:31:02.874889"
+    },
+    {
+      "test_name": "Search for Clause ID",
+      "success": true,
+      "details": "Status: 200, Response keys: ['clauses', 'total']",
+      "timestamp": "2026-01-14T13:31:02.905844"
+    },
+    {
+      "test_name": "Get Clause by ID",
+      "success": true,
+      "details": "Status: 200, Response keys: ['clause_id', 'number', 'title', 'type', 'text', 'summary', 'flowdown_required', 'contract_types', 'threshold_amount', 'keywords', 'last_updated']",
+      "timestamp": "2026-01-14T13:31:02.940652"
+    },
+    {
+      "test_name": "Get Clause by Number",
+      "success": true,
+      "details": "Status: 200, Response keys: ['clause_id', 'number', 'title', 'type', 'text', 'summary', 'flowdown_required', 'contract_types', 'threshold_amount', 'keywords', 'last_updated']",
+      "timestamp": "2026-01-14T13:31:03.014250"
+    },
+    {
+      "test_name": "Auth Me (Unauthenticated)",
+      "success": true,
+      "details": "Status: 401, Response keys: ['detail']",
+      "timestamp": "2026-01-14T13:31:03.048286"
+    },
+    {
+      "test_name": "AI Search (Unauthenticated)",
+      "success": true,
+      "details": "Status: 401, Response keys: ['detail']",
+      "timestamp": "2026-01-14T13:31:03.087448"
+    },
+    {
+      "test_name": "Contracts (Unauthenticated)",
+      "success": true,
+      "details": "Status: 401, Response keys: ['detail']",
+      "timestamp": "2026-01-14T13:31:03.123314"
+    },
+    {
+      "test_name": "Flowdown Analysis (Unauthenticated)",
+      "success": true,
+      "details": "Status: 401, Response keys: ['detail']",
+      "timestamp": "2026-01-14T13:31:03.162499"
+    },
+    {
+      "test_name": "Get Favorites (Unauth)",
+      "success": true,
+      "details": "Status: 401, Response keys: ['detail']",
+      "timestamp": "2026-01-14T13:31:03.194860"
+    },
+    {
+      "test_name": "Get Saved Searches (Unauth)",
+      "success": true,
+      "details": "Status: 401, Response keys: ['detail']",
+      "timestamp": "2026-01-14T13:31:03.231895"
+    },
+    {
+      "test_name": "Get Annotations (Unauth)",
+      "success": true,
+      "details": "Status: 401, Response keys: ['detail']",
+      "timestamp": "2026-01-14T13:31:03.264320"
+    }
+  ],
+  "timestamp": "2026-01-14T13:31:03.264981"
+}
