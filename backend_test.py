@@ -314,8 +314,15 @@ class FederalClauseAPITester:
         print("\n🔒 Testing authentication requirements...")
         self.test_auth_me_unauthenticated()
         
-        # Test authenticated endpoints (without auth - should return 401)
-        self.test_authenticated_endpoints()
+        # Try to set up test session
+        session_valid = self.create_test_session()
+        
+        if session_valid:
+            # Test authenticated features
+            self.test_authenticated_features_with_token()
+        else:
+            # Test authenticated endpoints (without auth - should return 401)
+            self.test_authenticated_endpoints()
 
         # Print summary
         print("\n" + "=" * 60)
