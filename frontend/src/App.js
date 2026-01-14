@@ -11,6 +11,7 @@ import ClauseDetail from "@/pages/ClauseDetail";
 import ContractUpload from "@/pages/ContractUpload";
 import FlowdownAnalysis from "@/pages/FlowdownAnalysis";
 import ContractDetail from "@/pages/ContractDetail";
+import ContractComparison from "@/pages/ContractComparison";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
@@ -163,6 +164,14 @@ function AppRouter() {
         element={
           <ProtectedRoute>
             {({ user }) => <ContractDetail user={user} />}
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/compare"
+        element={
+          <ProtectedRoute>
+            {({ user }) => <ContractComparison user={user} />}
           </ProtectedRoute>
         }
       />
