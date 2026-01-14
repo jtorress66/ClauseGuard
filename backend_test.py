@@ -195,8 +195,8 @@ class FederalClauseAPITester:
         success, _ = self.run_test("Batch Export CSV (Authenticated)", "POST", "api/export/batch", 200, export_data_csv, expect_json=False)
         
         # Test flowdown report export
-        flowdown_params = f"contract_type={flowdown_data['contract_type']}&contract_value={flowdown_data['contract_value']}&clauses={','.join(flowdown_data['clauses'])}"
-        self.run_test("Flowdown Report Export (Authenticated)", "POST", f"api/export/flowdown-report?{flowdown_params}", 200)
+        flowdown_params = f"contract_type={flowdown_data['contract_type']}&contract_value={flowdown_data['contract_value']}&clauses={flowdown_data['clauses'][0]}&clauses={flowdown_data['clauses'][1]}"
+        success, _ = self.run_test("Flowdown Report Export (Authenticated)", "POST", f"api/export/flowdown-report?{flowdown_params}", 200, expect_json=False)
         
         # Test Agiloft endpoints (will likely fail due to invalid credentials, but should return proper error)
         agiloft_config = {
