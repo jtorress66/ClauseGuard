@@ -209,6 +209,41 @@ class FederalClauseAPITester:
         }
         self.run_test("Agiloft Test Connection (Authenticated)", "POST", "api/agiloft/test-connection", 200, agiloft_config)
         
+        # Test new Agiloft push clauses endpoint
+        push_data = {
+            "config": agiloft_config,
+            "source": "database"
+        }
+        self.run_test("Agiloft Push Clauses (Authenticated)", "POST", "api/agiloft/push-clauses", 200, push_data)
+        
+        # Test new Agiloft contracts endpoint (should return demo data)
+        contracts_data = {
+            "config": agiloft_config,
+            "table_name": "Contracts"
+        }
+        self.run_test("Agiloft Get Contracts (Authenticated)", "POST", "api/agiloft/contracts", 200, contracts_data)
+        
+        # Test new Agiloft analyze contract endpoint
+        analyze_data = {
+            "config": agiloft_config,
+            "contract_id": "demo-1",
+            "contract_clauses": ["52.212-4", "252.204-7012"],
+            "contract_type": "Fixed-Price",
+            "contract_value": 1000000
+        }
+        self.run_test("Agiloft Analyze Contract (Authenticated)", "POST", "api/agiloft/analyze-contract", 200, analyze_data)
+        
+        # Test new Agiloft update contract endpoint
+        update_data = {
+            "config": agiloft_config,
+            "contract_id": "demo-1",
+            "updates": {
+                "missing_clauses": ["52.219-8"],
+                "flowdown_clauses": ["52.212-4"]
+            }
+        }
+        self.run_test("Agiloft Update Contract (Authenticated)", "POST", "api/agiloft/update-contract", 200, update_data)
+        
         # Test acquisition.gov sync
         self.run_test("Sync from acquisition.gov (Authenticated)", "POST", "api/clauses/sync-from-acquisition-gov", 200)
         
