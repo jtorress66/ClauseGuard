@@ -1582,15 +1582,20 @@ async def batch_export(export_request: BatchExportRequest, request: Request):
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
 
+class FlowdownReportRequest(BaseModel):
+    """Request for flowdown report"""
+    contract_type: str
+    contract_value: float
+    clauses: List[str]
+
 @export_router.post("/flowdown-report")
-async def export_flowdown_report(
-    contract_type: str,
-    contract_value: float,
-    clauses: List[str],
-    request: Request
-):
+async def export_flowdown_report(report_request: FlowdownReportRequest, request: Request):
     """Export a flowdown analysis report as PDF"""
     user = await require_auth(request)
+    
+    contract_type = report_request.contract_type
+    contract_value = report_request.contract_value
+    clauses = report_request.clauses
     
     # Run flowdown analysis
     flowdown_clauses = await db.clauses.find(
