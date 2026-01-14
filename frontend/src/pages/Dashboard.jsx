@@ -122,7 +122,7 @@ export default function Dashboard({ user }) {
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-8">
               <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate("/")}>
-                <Shield className="w-8 h-8 text-teal-600" />
+                <img src="https://customer-assets.emergentagent.com/job_f0e5b629-8260-447a-b845-dab293529025/artifacts/gvlwnwlo_image.png" alt="ClauseGuard" className="w-8 h-8" />
                 <span className="font-heading font-bold text-xl text-navy-900">ClauseGuard</span>
               </div>
               

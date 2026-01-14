@@ -65,7 +65,7 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-6 md:px-12 lg:px-24">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-2">
-              <Shield className="w-8 h-8 text-teal-400" />
+              <img src="https://customer-assets.emergentagent.com/job_f0e5b629-8260-447a-b845-dab293529025/artifacts/gvlwnwlo_image.png" alt="ClauseGuard" className="w-8 h-8" />
               <span className="font-heading font-bold text-xl text-white">ClauseGuard</span>
             </div>
             <div className="flex items-center gap-4">
@@ -232,7 +232,7 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-6 md:px-12 lg:px-24">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <Shield className="w-6 h-6 text-teal-400" />
+              <img src="https://customer-assets.emergentagent.com/job_f0e5b629-8260-447a-b845-dab293529025/artifacts/gvlwnwlo_image.png" alt="ClauseGuard" className="w-6 h-6" />
               <span className="font-heading font-bold text-white">ClauseGuard</span>
             </div>
             <p className="text-white/60 text-sm">
