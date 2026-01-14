@@ -112,7 +112,7 @@ export default function Dashboard({ user }) {
     { icon: Search, label: "AI Clause Search", onClick: () => navigate("/search?ai=true"), color: "bg-teal-600" },
     { icon: Upload, label: "Upload Contract", onClick: () => navigate("/upload"), color: "bg-navy-700" },
     { icon: Download, label: "Flowdown Analysis", onClick: () => navigate("/flowdown"), color: "bg-amber-600" },
-    { icon: FileText, label: "Export Report", onClick: () => toast.info("Select clauses to export"), color: "bg-slate-600" }
+    { icon: FileText, label: "Compare Contracts", onClick: () => navigate("/compare"), color: "bg-purple-600" }
   ];
 
   return (
