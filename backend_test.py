@@ -123,15 +123,93 @@ class FederalClauseAPITester:
         return self.run_test("Flowdown Analysis (Unauthenticated)", "POST", "api/flowdown/analyze", 401, data)
 
     def create_test_session(self):
-        """Create a test session using MongoDB directly (simulating auth)"""
+        """Create a test session using the provided test token"""
         print("\n🔧 Setting up test authentication...")
         
-        # This would normally be done through the auth flow, but for testing we'll simulate it
-        # In a real test, you'd go through the OAuth flow or use the auth_testing.md playbook
+        # Use the provided test session token
+        test_token = "test_session_batch_1768400260762"
+        self.session_token = test_token
         
-        # For now, we'll test without authentication and note that auth endpoints need manual testing
-        self.log_test("Test Session Setup", False, "Auth requires manual OAuth flow - see auth_testing.md")
-        return False
+        # Test if the token works
+        success, _ = self.run_test("Test Session Validation", "GET", "api/auth/me", 200)
+        
+        if success:
+            print("✅ Test session token is valid")
+            return True
+        else:
+            print("❌ Test session token is invalid - will test unauthenticated endpoints only")
+            self.session_token = None
+            return False
+
+    def test_authenticated_features_with_token(self):
+        """Test authenticated features with the test token"""
+        if not self.session_token:
+            print("⚠️ Skipping authenticated tests - no valid session token")
+            return
+            
+        print("\n🔐 Testing authenticated features with test token...")
+        
+        # Test AI search with authentication
+        self.run_test("AI Search (Authenticated)", "GET", "api/clauses/ai-search?query=cybersecurity", 200)
+        
+        # Test contracts endpoint
+        self.run_test("Get Contracts (Authenticated)", "GET", "api/contracts/", 200)
+        
+        # Test flowdown analysis
+        flowdown_data = {
+            "contract_type": "Fixed-Price", 
+            "contract_value": 1000000,
+            "clauses": ["52.212-4", "252.204-7012"]
+        }
+        self.run_test("Flowdown Analysis (Authenticated)", "POST", "api/flowdown/analyze", 200, flowdown_data)
+        
+        # Test batch export with different formats
+        export_data_pdf = {
+            "clause_numbers": ["52.212-4"],
+            "clause_ids": [],
+            "include_full_text": True,
+            "include_flowdown_info": True,
+            "format": "pdf"
+        }
+        self.run_test("Batch Export PDF (Authenticated)", "POST", "api/export/batch", 200, export_data_pdf)
+        
+        export_data_json = {
+            "clause_numbers": ["52.212-4"],
+            "clause_ids": [],
+            "include_full_text": True,
+            "include_flowdown_info": True,
+            "format": "json"
+        }
+        self.run_test("Batch Export JSON (Authenticated)", "POST", "api/export/batch", 200, export_data_json)
+        
+        export_data_csv = {
+            "clause_numbers": ["52.212-4"],
+            "clause_ids": [],
+            "include_full_text": True,
+            "include_flowdown_info": True,
+            "format": "csv"
+        }
+        self.run_test("Batch Export CSV (Authenticated)", "POST", "api/export/batch", 200, export_data_csv)
+        
+        # Test flowdown report export
+        self.run_test("Flowdown Report Export (Authenticated)", "POST", "api/export/flowdown-report", 200, flowdown_data)
+        
+        # Test Agiloft endpoints (will likely fail due to invalid credentials, but should return proper error)
+        agiloft_config = {
+            "kb_url": "https://test.agiloft.com/ewws",
+            "username": "test_user", 
+            "password": "test_pass",
+            "kb_name": "Default"
+        }
+        self.run_test("Agiloft Test Connection (Authenticated)", "POST", "api/agiloft/test-connection", 200, agiloft_config)
+        
+        # Test acquisition.gov sync
+        self.run_test("Sync from acquisition.gov (Authenticated)", "POST", "api/clauses/sync-from-acquisition-gov", 200)
+        
+        # Test user endpoints
+        self.run_test("Get Favorites (Authenticated)", "GET", "api/user/favorites", 200)
+        self.run_test("Get Saved Searches (Authenticated)", "GET", "api/user/saved-searches", 200)
+        self.run_test("Get Annotations (Authenticated)", "GET", "api/user/annotations", 200)
 
     def test_new_acquisition_gov_endpoints(self):
         """Test new acquisition.gov integration endpoints"""
