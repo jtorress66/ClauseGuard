@@ -2,12 +2,13 @@ import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useDropzone } from "react-dropzone";
 import { 
-  ArrowLeft, Shield, Upload, FileText, CheckCircle, 
+  ArrowLeft, Upload, FileText, CheckCircle, 
   AlertCircle, Loader2, X 
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { API } from "@/App";
+import { ClauseGuardLogo } from "@/components/ClauseGuardLogo";
 
 export default function ContractUpload({ user }) {
   const navigate = useNavigate();
@@ -118,7 +119,7 @@ export default function ContractUpload({ user }) {
               <ArrowLeft className="w-5 h-5" />
             </Button>
             <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate("/")}>
-              <img src="https://customer-assets.emergentagent.com/job_f0e5b629-8260-447a-b845-dab293529025/artifacts/gvlwnwlo_image.png" alt="ClauseGuard" className="w-7 h-7" />
+              <ClauseGuardLogo className="w-7 h-7" variant="light" />
               <span className="font-heading font-bold text-lg text-navy-900">ClauseGuard</span>
             </div>
           </div>

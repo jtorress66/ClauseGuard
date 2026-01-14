@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { 
-  ArrowLeft, Shield, Star, FileText, Download, 
+  ArrowLeft, Star, FileText, Download, 
   MessageSquare, Plus, Trash2, ExternalLink, Copy, Check
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { API } from "@/App";
+import { ClauseGuardLogo } from "@/components/ClauseGuardLogo";
 
 export default function ClauseDetail() {
   const { clauseId } = useParams();
@@ -209,7 +210,7 @@ export default function ClauseDetail() {
                 <ArrowLeft className="w-5 h-5" />
               </Button>
               <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate("/")}>
-                <img src="https://customer-assets.emergentagent.com/job_f0e5b629-8260-447a-b845-dab293529025/artifacts/gvlwnwlo_image.png" alt="ClauseGuard" className="w-7 h-7" />
+                <ClauseGuardLogo className="w-7 h-7" variant="light" />
                 <span className="font-heading font-bold text-lg text-navy-900">ClauseGuard</span>
               </div>
             </div>
