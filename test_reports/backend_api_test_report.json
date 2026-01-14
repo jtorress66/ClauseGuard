@@ -1,7 +1,7 @@
 {
   "summary": {
-    "total_tests": 13,
-    "passed_tests": 13,
+    "total_tests": 16,
+    "passed_tests": 16,
     "failed_tests": 0,
     "success_rate": "100.0%"
   },
@@ -10,80 +10,98 @@
       "test_name": "Root API",
       "success": true,
       "details": "Status: 200, Response keys: ['message', 'version']",
-      "timestamp": "2026-01-14T13:31:02.764433"
+      "timestamp": "2026-01-14T14:02:19.945426"
     },
     {
       "test_name": "Basic Clause Search",
       "success": true,
       "details": "Status: 200, Response keys: ['clauses', 'total']",
-      "timestamp": "2026-01-14T13:31:02.800688"
+      "timestamp": "2026-01-14T14:02:19.981786"
     },
     {
       "test_name": "Clause Search with Type",
       "success": true,
       "details": "Status: 200, Response keys: ['clauses', 'total']",
-      "timestamp": "2026-01-14T13:31:02.874889"
+      "timestamp": "2026-01-14T14:02:20.054999"
     },
     {
       "test_name": "Search for Clause ID",
       "success": true,
       "details": "Status: 200, Response keys: ['clauses', 'total']",
-      "timestamp": "2026-01-14T13:31:02.905844"
+      "timestamp": "2026-01-14T14:02:20.095708"
     },
     {
       "test_name": "Get Clause by ID",
       "success": true,
       "details": "Status: 200, Response keys: ['clause_id', 'number', 'title', 'type', 'text', 'summary', 'flowdown_required', 'contract_types', 'threshold_amount', 'keywords', 'last_updated']",
-      "timestamp": "2026-01-14T13:31:02.940652"
+      "timestamp": "2026-01-14T14:02:20.129284"
     },
     {
       "test_name": "Get Clause by Number",
       "success": true,
       "details": "Status: 200, Response keys: ['clause_id', 'number', 'title', 'type', 'text', 'summary', 'flowdown_required', 'contract_types', 'threshold_amount', 'keywords', 'last_updated']",
-      "timestamp": "2026-01-14T13:31:03.014250"
+      "timestamp": "2026-01-14T14:02:20.164217"
     },
     {
       "test_name": "Auth Me (Unauthenticated)",
       "success": true,
       "details": "Status: 401, Response keys: ['detail']",
-      "timestamp": "2026-01-14T13:31:03.048286"
+      "timestamp": "2026-01-14T14:02:20.237363"
     },
     {
       "test_name": "AI Search (Unauthenticated)",
       "success": true,
       "details": "Status: 401, Response keys: ['detail']",
-      "timestamp": "2026-01-14T13:31:03.087448"
+      "timestamp": "2026-01-14T14:02:20.286888"
     },
     {
       "test_name": "Contracts (Unauthenticated)",
       "success": true,
       "details": "Status: 401, Response keys: ['detail']",
-      "timestamp": "2026-01-14T13:31:03.123314"
+      "timestamp": "2026-01-14T14:02:20.319055"
     },
     {
       "test_name": "Flowdown Analysis (Unauthenticated)",
       "success": true,
       "details": "Status: 401, Response keys: ['detail']",
-      "timestamp": "2026-01-14T13:31:03.162499"
+      "timestamp": "2026-01-14T14:02:20.355512"
+    },
+    {
+      "test_name": "Sync from acquisition.gov (Unauth)",
+      "success": true,
+      "details": "Status: 401, Response keys: ['detail']",
+      "timestamp": "2026-01-14T14:02:20.390279"
+    },
+    {
+      "test_name": "Fetch Live Clause (Unauth)",
+      "success": true,
+      "details": "Status: 401, Response keys: ['detail']",
+      "timestamp": "2026-01-14T14:02:20.460743"
+    },
+    {
+      "test_name": "Contract Comparison (Unauth)",
+      "success": true,
+      "details": "Status: 401, Response keys: ['detail']",
+      "timestamp": "2026-01-14T14:02:20.492204"
     },
     {
       "test_name": "Get Favorites (Unauth)",
       "success": true,
       "details": "Status: 401, Response keys: ['detail']",
-      "timestamp": "2026-01-14T13:31:03.194860"
+      "timestamp": "2026-01-14T14:02:20.522178"
     },
     {
       "test_name": "Get Saved Searches (Unauth)",
       "success": true,
       "details": "Status: 401, Response keys: ['detail']",
-      "timestamp": "2026-01-14T13:31:03.231895"
+      "timestamp": "2026-01-14T14:02:20.555107"
     },
     {
       "test_name": "Get Annotations (Unauth)",
       "success": true,
       "details": "Status: 401, Response keys: ['detail']",
-      "timestamp": "2026-01-14T13:31:03.264320"
+      "timestamp": "2026-01-14T14:02:20.585894"
     }
   ],
-  "timestamp": "2026-01-14T13:31:03.264981"
+  "timestamp": "2026-01-14T14:02:20.586612"
 }
