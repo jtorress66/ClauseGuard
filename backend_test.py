@@ -269,16 +269,40 @@ class FederalClauseAPITester:
         }
         self.run_test("Agiloft Test Connection (Unauth)", "POST", "api/agiloft/test-connection", 401, agiloft_config)
         
-        # Test sync clauses endpoint (requires auth)
-        sync_data = {
+        # Test push clauses endpoint (requires auth) - NEW ENDPOINT
+        push_data = {
             "config": agiloft_config,
-            "table_name": "Clauses",
-            "field_mapping": {}
+            "source": "database"
         }
-        self.run_test("Agiloft Sync Clauses (Unauth)", "POST", "api/agiloft/sync-clauses", 401, sync_data)
+        self.run_test("Agiloft Push Clauses (Unauth)", "POST", "api/agiloft/push-clauses", 401, push_data)
         
-        # Test get tables endpoint (requires auth)
-        self.run_test("Agiloft Get Tables (Unauth)", "GET", "api/agiloft/tables?kb_url=https://test.agiloft.com/ewws&username=test&password=test", 401)
+        # Test contracts endpoint (requires auth) - NEW ENDPOINT
+        contracts_data = {
+            "config": agiloft_config,
+            "table_name": "Contracts"
+        }
+        self.run_test("Agiloft Get Contracts (Unauth)", "POST", "api/agiloft/contracts", 401, contracts_data)
+        
+        # Test analyze contract endpoint (requires auth) - NEW ENDPOINT
+        analyze_data = {
+            "config": agiloft_config,
+            "contract_id": "demo-1",
+            "contract_clauses": ["52.212-4", "252.204-7012"],
+            "contract_type": "Fixed-Price",
+            "contract_value": 1000000
+        }
+        self.run_test("Agiloft Analyze Contract (Unauth)", "POST", "api/agiloft/analyze-contract", 401, analyze_data)
+        
+        # Test update contract endpoint (requires auth) - NEW ENDPOINT
+        update_data = {
+            "config": agiloft_config,
+            "contract_id": "demo-1",
+            "updates": {
+                "missing_clauses": ["52.219-8"],
+                "flowdown_clauses": ["52.212-4"]
+            }
+        }
+        self.run_test("Agiloft Update Contract (Unauth)", "POST", "api/agiloft/update-contract", 401, update_data)
 
     def test_authenticated_endpoints(self):
         """Test endpoints that require authentication"""
