@@ -258,7 +258,7 @@ export default function AgiloftIntegration({ user }) {
               <Label htmlFor="kb_url">KB URL</Label>
               <Input
                 id="kb_url"
-                placeholder="https://company.agiloft.com/ewws"
+                placeholder="https://company.agiloft.com/ewws/REST"
                 value={config.kb_url}
                 onChange={(e) => handleConfigChange("kb_url", e.target.value)}
                 data-testid="kb-url-input"
