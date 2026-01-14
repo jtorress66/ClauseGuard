@@ -93,3 +93,6 @@ Build a Federal Clause Management app that helps government contractors manage F
 - Agiloft integration uses demo/sample data when no live connection is available
 - All protected routes require authentication
 - AI features require Emergent LLM key (already configured)
+
+## Change Log
+- **2025-01-14**: Replaced server.py with user-provided version. Full regression testing passed (33/33 tests). Backend backup saved at /app/backend/server.py.backup
