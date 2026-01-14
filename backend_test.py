@@ -1,0 +1,210 @@
+import requests
+import sys
+import json
+from datetime import datetime
+
+class FederalClauseAPITester:
+    def __init__(self, base_url="https://fed-contract-hub.preview.emergentagent.com"):
+        self.base_url = base_url
+        self.session_token = None
+        self.user_id = None
+        self.tests_run = 0
+        self.tests_passed = 0
+        self.test_results = []
+
+    def log_test(self, name, success, details=""):
+        """Log test result"""
+        self.tests_run += 1
+        if success:
+            self.tests_passed += 1
+        
+        result = {
+            "test_name": name,
+            "success": success,
+            "details": details,
+            "timestamp": datetime.now().isoformat()
+        }
+        self.test_results.append(result)
+        
+        status = "✅ PASS" if success else "❌ FAIL"
+        print(f"{status} - {name}")
+        if details:
+            print(f"    Details: {details}")
+
+    def run_test(self, name, method, endpoint, expected_status, data=None, headers=None):
+        """Run a single API test"""
+        url = f"{self.base_url}/{endpoint}"
+        test_headers = {'Content-Type': 'application/json'}
+        
+        if self.session_token:
+            test_headers['Authorization'] = f'Bearer {self.session_token}'
+        
+        if headers:
+            test_headers.update(headers)
+
+        try:
+            if method == 'GET':
+                response = requests.get(url, headers=test_headers, timeout=30)
+            elif method == 'POST':
+                response = requests.post(url, json=data, headers=test_headers, timeout=30)
+            elif method == 'DELETE':
+                response = requests.delete(url, headers=test_headers, timeout=30)
+            elif method == 'PUT':
+                response = requests.put(url, json=data, headers=test_headers, timeout=30)
+
+            success = response.status_code == expected_status
+            details = f"Status: {response.status_code}"
+            
+            if success and response.content:
+                try:
+                    response_data = response.json()
+                    details += f", Response keys: {list(response_data.keys()) if isinstance(response_data, dict) else 'Non-dict response'}"
+                except:
+                    details += ", Response: Non-JSON"
+            elif not success:
+                try:
+                    error_data = response.json()
+                    details += f", Error: {error_data.get('detail', 'Unknown error')}"
+                except:
+                    details += f", Raw response: {response.text[:100]}"
+
+            self.log_test(name, success, details)
+            return success, response.json() if success and response.content else {}
+
+        except Exception as e:
+            self.log_test(name, False, f"Exception: {str(e)}")
+            return False, {}
+
+    def test_root_endpoint(self):
+        """Test root API endpoint"""
+        return self.run_test("Root API", "GET", "api/", 200)
+
+    def test_clause_search_basic(self):
+        """Test basic clause search"""
+        return self.run_test("Basic Clause Search", "GET", "api/clauses/search?query=FAR", 200)
+
+    def test_clause_search_with_type(self):
+        """Test clause search with type filter"""
+        return self.run_test("Clause Search with Type", "GET", "api/clauses/search?query=52.212&clause_type=FAR", 200)
+
+    def test_clause_by_id(self):
+        """Test getting clause by ID - first get a clause ID from search"""
+        success, search_data = self.run_test("Search for Clause ID", "GET", "api/clauses/search?query=52.212-4&limit=1", 200)
+        if success and search_data.get('clauses'):
+            clause_id = search_data['clauses'][0]['clause_id']
+            return self.run_test("Get Clause by ID", "GET", f"api/clauses/{clause_id}", 200)
+        else:
+            self.log_test("Get Clause by ID", False, "No clause found in search to test with")
+            return False, {}
+
+    def test_clause_by_number(self):
+        """Test getting clause by number"""
+        return self.run_test("Get Clause by Number", "GET", "api/clauses/by-number/52.212-4", 200)
+
+    def test_auth_me_unauthenticated(self):
+        """Test auth/me endpoint without authentication"""
+        return self.run_test("Auth Me (Unauthenticated)", "GET", "api/auth/me", 401)
+
+    def test_ai_search_unauthenticated(self):
+        """Test AI search without authentication"""
+        return self.run_test("AI Search (Unauthenticated)", "GET", "api/clauses/ai-search?query=cybersecurity", 401)
+
+    def test_contracts_unauthenticated(self):
+        """Test contracts endpoint without authentication"""
+        return self.run_test("Contracts (Unauthenticated)", "GET", "api/contracts/", 401)
+
+    def test_flowdown_unauthenticated(self):
+        """Test flowdown analysis without authentication"""
+        data = {
+            "contract_type": "Fixed-Price",
+            "contract_value": 1000000,
+            "clauses": ["52.212-4", "252.204-7012"]
+        }
+        return self.run_test("Flowdown Analysis (Unauthenticated)", "POST", "api/flowdown/analyze", 401, data)
+
+    def create_test_session(self):
+        """Create a test session using MongoDB directly (simulating auth)"""
+        print("\n🔧 Setting up test authentication...")
+        
+        # This would normally be done through the auth flow, but for testing we'll simulate it
+        # In a real test, you'd go through the OAuth flow or use the auth_testing.md playbook
+        
+        # For now, we'll test without authentication and note that auth endpoints need manual testing
+        self.log_test("Test Session Setup", False, "Auth requires manual OAuth flow - see auth_testing.md")
+        return False
+
+    def test_authenticated_endpoints(self):
+        """Test endpoints that require authentication"""
+        print("\n📝 Testing authenticated endpoints (will fail without session)...")
+        
+        # These tests will fail without proper authentication
+        # but we can verify they return 401 as expected
+        
+        self.test_ai_search_unauthenticated()
+        self.test_contracts_unauthenticated()
+        self.test_flowdown_unauthenticated()
+        
+        # Test user endpoints
+        self.run_test("Get Favorites (Unauth)", "GET", "api/user/favorites", 401)
+        self.run_test("Get Saved Searches (Unauth)", "GET", "api/user/saved-searches", 401)
+        self.run_test("Get Annotations (Unauth)", "GET", "api/user/annotations", 401)
+
+    def run_all_tests(self):
+        """Run all API tests"""
+        print("🚀 Starting Federal Clause Management API Tests")
+        print(f"Testing against: {self.base_url}")
+        print("=" * 60)
+
+        # Test public endpoints
+        print("\n📋 Testing public endpoints...")
+        self.test_root_endpoint()
+        self.test_clause_search_basic()
+        self.test_clause_search_with_type()
+        self.test_clause_by_id()
+        self.test_clause_by_number()
+
+        # Test auth requirements
+        print("\n🔒 Testing authentication requirements...")
+        self.test_auth_me_unauthenticated()
+        
+        # Test authenticated endpoints (without auth - should return 401)
+        self.test_authenticated_endpoints()
+
+        # Print summary
+        print("\n" + "=" * 60)
+        print(f"📊 Test Summary: {self.tests_passed}/{self.tests_run} tests passed")
+        
+        if self.tests_passed == self.tests_run:
+            print("🎉 All tests passed!")
+            return 0
+        else:
+            print("⚠️  Some tests failed - see details above")
+            return 1
+
+    def get_test_report(self):
+        """Get detailed test report"""
+        return {
+            "summary": {
+                "total_tests": self.tests_run,
+                "passed_tests": self.tests_passed,
+                "failed_tests": self.tests_run - self.tests_passed,
+                "success_rate": f"{(self.tests_passed/self.tests_run*100):.1f}%" if self.tests_run > 0 else "0%"
+            },
+            "test_results": self.test_results,
+            "timestamp": datetime.now().isoformat()
+        }
+
+def main():
+    tester = FederalClauseAPITester()
+    exit_code = tester.run_all_tests()
+    
+    # Save detailed report
+    report = tester.get_test_report()
+    with open('/app/test_reports/backend_api_test_report.json', 'w') as f:
+        json.dump(report, f, indent=2)
+    
+    print(f"\n📄 Detailed report saved to: /app/test_reports/backend_api_test_report.json")
+    return exit_code
+
+if __name__ == "__main__":
+    sys.exit(main())
