@@ -305,8 +305,14 @@ class TestAgiloftTestConnection:
         }
         response = authenticated_client.post(f"{BASE_URL}/api/agiloft/test-connection", json=data)
         
-        # Should return error (401 or 500) but not crash
-        assert response.status_code in [401, 500]
+        # Should return error (401, 500, or 520 for connection issues) but not crash
+        # 520 is returned when the external Agiloft server is unreachable
+        assert response.status_code in [401, 500, 520]
+        
+        # Verify error message is returned
+        if response.status_code == 500:
+            data = response.json()
+            assert "detail" in data
 
 
 class TestAgiloftContracts:
