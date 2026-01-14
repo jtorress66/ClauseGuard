@@ -1,143 +1,131 @@
 {
   "summary": {
-    "total_tests": 22,
+    "total_tests": 20,
     "passed_tests": 19,
-    "failed_tests": 3,
-    "success_rate": "86.4%"
+    "failed_tests": 1,
+    "success_rate": "95.0%"
   },
   "test_results": [
     {
       "test_name": "Root API",
       "success": true,
       "details": "Status: 200, Response keys: ['message', 'version']",
-      "timestamp": "2026-01-14T14:21:28.912688"
+      "timestamp": "2026-01-14T14:22:26.885256"
     },
     {
       "test_name": "Basic Clause Search",
       "success": true,
       "details": "Status: 200, Response keys: ['clauses', 'total']",
-      "timestamp": "2026-01-14T14:21:28.946720"
+      "timestamp": "2026-01-14T14:22:26.926833"
     },
     {
       "test_name": "Clause Search with Type",
       "success": true,
       "details": "Status: 200, Response keys: ['clauses', 'total']",
-      "timestamp": "2026-01-14T14:21:28.980935"
+      "timestamp": "2026-01-14T14:22:26.958838"
     },
     {
       "test_name": "Search for Clause ID",
       "success": true,
       "details": "Status: 200, Response keys: ['clauses', 'total']",
-      "timestamp": "2026-01-14T14:21:29.014991"
+      "timestamp": "2026-01-14T14:22:26.994186"
     },
     {
       "test_name": "Get Clause by ID",
       "success": true,
       "details": "Status: 200, Response keys: ['clause_id', 'number', 'title', 'type', 'text', 'summary', 'flowdown_required', 'contract_types', 'threshold_amount', 'keywords', 'last_updated']",
-      "timestamp": "2026-01-14T14:21:29.051907"
+      "timestamp": "2026-01-14T14:22:27.027854"
     },
     {
       "test_name": "Get Clause by Number",
       "success": true,
       "details": "Status: 200, Response keys: ['clause_id', 'number', 'title', 'type', 'text', 'summary', 'flowdown_required', 'contract_types', 'threshold_amount', 'keywords', 'last_updated']",
-      "timestamp": "2026-01-14T14:21:29.092787"
+      "timestamp": "2026-01-14T14:22:27.103482"
     },
     {
       "test_name": "Auth Me (Unauthenticated)",
       "success": true,
       "details": "Status: 401, Response keys: ['detail']",
-      "timestamp": "2026-01-14T14:21:29.123855"
+      "timestamp": "2026-01-14T14:22:27.136445"
     },
     {
       "test_name": "Test Session Validation",
       "success": true,
       "details": "Status: 200, Response keys: ['user_id', 'email', 'name', 'picture', 'created_at']",
-      "timestamp": "2026-01-14T14:21:29.166027"
+      "timestamp": "2026-01-14T14:22:27.170128"
     },
     {
       "test_name": "AI Search (Authenticated)",
       "success": true,
       "details": "Status: 200, Response keys: ['clauses', 'ai_analysis', 'total']",
-      "timestamp": "2026-01-14T14:21:33.459370"
+      "timestamp": "2026-01-14T14:22:30.185892"
     },
     {
       "test_name": "Get Contracts (Authenticated)",
       "success": true,
       "details": "Status: 200, Response keys: ['contracts']",
-      "timestamp": "2026-01-14T14:21:33.490692"
+      "timestamp": "2026-01-14T14:22:30.224331"
     },
     {
       "test_name": "Flowdown Analysis (Authenticated)",
       "success": true,
       "details": "Status: 200, Response keys: ['required_flowdown_clauses', 'present_in_contract', 'missing_from_contract', 'clause_details']",
-      "timestamp": "2026-01-14T14:21:33.529630"
+      "timestamp": "2026-01-14T14:22:30.262462"
     },
     {
       "test_name": "Batch Export PDF (Authenticated)",
       "success": true,
-      "details": "Status: 200, Response: Non-JSON",
-      "timestamp": "2026-01-14T14:21:33.968764"
-    },
-    {
-      "test_name": "Batch Export PDF (Authenticated)",
-      "success": false,
-      "details": "Exception: Expecting value: line 1 column 1 (char 0)",
-      "timestamp": "2026-01-14T14:21:33.972360"
+      "details": "Status: 200, Content-Type: application/pdf",
+      "timestamp": "2026-01-14T14:22:30.310318"
     },
     {
       "test_name": "Batch Export JSON (Authenticated)",
       "success": true,
       "details": "Status: 200, Response keys: ['export_date', 'total_clauses', 'clauses']",
-      "timestamp": "2026-01-14T14:21:34.028561"
+      "timestamp": "2026-01-14T14:22:30.348353"
     },
     {
       "test_name": "Batch Export CSV (Authenticated)",
       "success": true,
-      "details": "Status: 200, Response: Non-JSON",
-      "timestamp": "2026-01-14T14:21:34.062916"
-    },
-    {
-      "test_name": "Batch Export CSV (Authenticated)",
-      "success": false,
-      "details": "Exception: Expecting value: line 1 column 1 (char 0)",
-      "timestamp": "2026-01-14T14:21:34.062955"
+      "details": "Status: 200, Content-Type: text/csv; charset=utf-8",
+      "timestamp": "2026-01-14T14:22:30.421406"
     },
     {
       "test_name": "Flowdown Report Export (Authenticated)",
       "success": false,
-      "details": "Status: 422, Error: [{'type': 'missing', 'loc': ['query', 'contract_type'], 'msg': 'Field required', 'input': None, 'url': 'https://errors.pydantic.dev/2.12/v/missing'}, {'type': 'missing', 'loc': ['query', 'contract_value'], 'msg': 'Field required', 'input': None, 'url': 'https://errors.pydantic.dev/2.12/v/missing'}, {'type': 'list_type', 'loc': ['body'], 'msg': 'Input should be a valid list', 'input': {'contract_type': 'Fixed-Price', 'contract_value': 1000000, 'clauses': ['52.212-4', '252.204-7012']}, 'url': 'https://errors.pydantic.dev/2.12/v/list_type'}]",
-      "timestamp": "2026-01-14T14:21:34.096984"
+      "details": "Status: 422, Error: [{'type': 'missing', 'loc': ['body'], 'msg': 'Field required', 'input': None, 'url': 'https://errors.pydantic.dev/2.12/v/missing'}]",
+      "timestamp": "2026-01-14T14:22:30.461611"
     },
     {
       "test_name": "Agiloft Test Connection (Authenticated)",
       "success": true,
       "details": "Status: 200, Response keys: ['success', 'message']",
-      "timestamp": "2026-01-14T14:21:34.243544"
+      "timestamp": "2026-01-14T14:22:30.591219"
     },
     {
       "test_name": "Sync from acquisition.gov (Authenticated)",
       "success": true,
       "details": "Status: 200, Response keys: ['message', 'total_new']",
-      "timestamp": "2026-01-14T14:21:36.225647"
+      "timestamp": "2026-01-14T14:22:32.953842"
     },
     {
       "test_name": "Get Favorites (Authenticated)",
       "success": true,
       "details": "Status: 200, Response keys: ['favorites']",
-      "timestamp": "2026-01-14T14:21:36.261482"
+      "timestamp": "2026-01-14T14:22:33.006554"
     },
     {
       "test_name": "Get Saved Searches (Authenticated)",
       "success": true,
       "details": "Status: 200, Response keys: ['saved_searches']",
-      "timestamp": "2026-01-14T14:21:36.305850"
+      "timestamp": "2026-01-14T14:22:33.042625"
     },
     {
       "test_name": "Get Annotations (Authenticated)",
       "success": true,
       "details": "Status: 200, Response keys: ['annotations']",
-      "timestamp": "2026-01-14T14:21:36.341433"
+      "timestamp": "2026-01-14T14:22:33.076210"
     }
   ],
-  "timestamp": "2026-01-14T14:21:36.342226"
+  "timestamp": "2026-01-14T14:22:33.076940"
 }
