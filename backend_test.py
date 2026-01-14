@@ -210,6 +210,8 @@ class FederalClauseAPITester:
         # Test new endpoints
         self.test_new_acquisition_gov_endpoints()
         self.test_contract_comparison_endpoint()
+        self.test_batch_export_endpoints()
+        self.test_agiloft_integration_endpoints()
         
         # Test user endpoints
         self.run_test("Get Favorites (Unauth)", "GET", "api/user/favorites", 401)
