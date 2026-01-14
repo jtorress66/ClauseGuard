@@ -1662,27 +1662,34 @@ async def update_agiloft_contract(update_request: AgiloftUpdateRequest, request:
     
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # Login
+            # Login using REST API
             login_response = await client.post(
-                f"{config.kb_url}/EWLogin",
-                data={
+                f"{config.kb_url}/login",
+                params={"lang": "en"},
+                json={
                     "login": config.username,
                     "password": config.password,
                     "KB": config.kb_name
-                }
+                },
+                headers={"Content-Type": "application/json"}
             )
             
-            if login_response.status_code != 200:
-                return {"success": False, "message": "Authentication failed"}
+            # Get token
+            token = ""
+            if login_response.status_code == 200:
+                try:
+                    login_data = login_response.json()
+                    token = login_data.get("token", "")
+                except:
+                    pass
             
-            cookies = login_response.cookies
+            auth_headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}" if token else ""
+            }
             
             # Build update data
-            update_data = {
-                "KB": config.kb_name,
-                "$table": "Contracts",
-                "$id": update_request.contract_id
-            }
+            update_data = {}
             
             # Add missing clauses to the contract
             missing = update_request.updates.get("missing_clauses", [])
@@ -1698,11 +1705,13 @@ async def update_agiloft_contract(update_request: AgiloftUpdateRequest, request:
             update_data["compliance_checked"] = datetime.now(timezone.utc).isoformat()
             update_data["compliance_checker"] = user.name
             
-            # Update in Agiloft
-            update_response = await client.post(
-                f"{config.kb_url}/EWUpdate",
-                cookies=cookies,
-                data=update_data
+            # Update in Agiloft using REST API
+            update_url = f"{config.kb_url}/Contracts/{update_request.contract_id}"
+            update_response = await client.put(
+                update_url,
+                params={"lang": "en"},
+                json=update_data,
+                headers=auth_headers
             )
             
             if update_response.status_code == 200:
