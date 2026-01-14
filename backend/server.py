@@ -1219,6 +1219,440 @@ async def update_checklist_item(
 async def root():
     return {"message": "Federal Clause Management API", "version": "1.0.0"}
 
+# ==================== Agiloft Integration Routes ====================
+
+class AgiloftConfig(BaseModel):
+    """Agiloft KB configuration"""
+    kb_url: str  # e.g., https://yourcompany.agiloft.com/ewws
+    username: str
+    password: str
+    kb_name: str = "Default"
+
+class AgiloftSyncRequest(BaseModel):
+    """Request to sync clauses from Agiloft"""
+    config: AgiloftConfig
+    table_name: str = "Clauses"  # Default table name for clauses
+    field_mapping: Dict[str, str] = {}  # Map Agiloft fields to our clause fields
+
+@agiloft_router.post("/test-connection")
+async def test_agiloft_connection(config: AgiloftConfig, request: Request):
+    """Test connection to Agiloft knowledge base"""
+    user = await require_auth(request)
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Agiloft REST API login endpoint
+            login_url = f"{config.kb_url}/EWLogin"
+            
+            response = await client.post(
+                login_url,
+                data={
+                    "login": config.username,
+                    "password": config.password,
+                    "KB": config.kb_name
+                }
+            )
+            
+            if response.status_code == 200:
+                # Check if login was successful
+                if "error" in response.text.lower():
+                    return {"success": False, "message": "Authentication failed", "details": response.text}
+                
+                return {
+                    "success": True,
+                    "message": "Successfully connected to Agiloft KB",
+                    "kb_name": config.kb_name
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": f"Connection failed with status {response.status_code}",
+                    "details": response.text
+                }
+    except Exception as e:
+        logger.error(f"Agiloft connection error: {e}")
+        return {"success": False, "message": f"Connection error: {str(e)}"}
+
+@agiloft_router.post("/sync-clauses")
+async def sync_clauses_from_agiloft(sync_request: AgiloftSyncRequest, request: Request):
+    """Sync clauses from Agiloft knowledge base"""
+    user = await require_auth(request)
+    
+    config = sync_request.config
+    
+    # Default field mapping if not provided
+    field_mapping = sync_request.field_mapping or {
+        "clause_number": "number",
+        "clause_title": "title",
+        "clause_type": "type",
+        "clause_text": "text",
+        "flowdown_required": "flowdown_required"
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # Login to Agiloft
+            login_url = f"{config.kb_url}/EWLogin"
+            login_response = await client.post(
+                login_url,
+                data={
+                    "login": config.username,
+                    "password": config.password,
+                    "KB": config.kb_name
+                }
+            )
+            
+            if login_response.status_code != 200:
+                raise HTTPException(status_code=401, detail="Agiloft authentication failed")
+            
+            # Get session cookie
+            cookies = login_response.cookies
+            
+            # Search for all clauses in the table
+            search_url = f"{config.kb_url}/EWSearch"
+            search_response = await client.post(
+                search_url,
+                cookies=cookies,
+                data={
+                    "KB": config.kb_name,
+                    "$table": sync_request.table_name,
+                    "$lang": "en",
+                    "$fields": ",".join(field_mapping.keys())
+                }
+            )
+            
+            if search_response.status_code != 200:
+                raise HTTPException(status_code=500, detail="Failed to search Agiloft KB")
+            
+            # Parse response (Agiloft returns JSON)
+            try:
+                agiloft_data = search_response.json()
+            except:
+                # Try XML parsing if JSON fails
+                agiloft_data = {"records": []}
+            
+            # Sync clauses to our database
+            synced_count = 0
+            records = agiloft_data.get("records", agiloft_data.get("result", []))
+            
+            for record in records:
+                clause_doc = {
+                    "clause_id": str(uuid.uuid4()),
+                    "number": record.get(field_mapping.get("clause_number", "clause_number"), ""),
+                    "title": record.get(field_mapping.get("clause_title", "clause_title"), ""),
+                    "type": record.get(field_mapping.get("clause_type", "clause_type"), "Custom"),
+                    "text": record.get(field_mapping.get("clause_text", "clause_text"), ""),
+                    "flowdown_required": bool(record.get(field_mapping.get("flowdown_required", "flowdown_required"), False)),
+                    "contract_types": [],
+                    "threshold_amount": None,
+                    "keywords": [],
+                    "last_updated": datetime.now(timezone.utc).isoformat(),
+                    "source": "agiloft",
+                    "agiloft_kb": config.kb_name
+                }
+                
+                if clause_doc["number"]:
+                    # Upsert - update if exists, insert if not
+                    await db.clauses.update_one(
+                        {"number": clause_doc["number"], "source": "agiloft"},
+                        {"$set": clause_doc},
+                        upsert=True
+                    )
+                    synced_count += 1
+            
+            return {
+                "success": True,
+                "message": f"Synced {synced_count} clauses from Agiloft",
+                "synced_count": synced_count
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Agiloft sync error: {e}")
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+
+@agiloft_router.get("/tables")
+async def get_agiloft_tables(
+    kb_url: str,
+    username: str,
+    password: str,
+    kb_name: str = "Default",
+    request: Request = None
+):
+    """Get list of tables from Agiloft KB"""
+    user = await require_auth(request)
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Login
+            login_response = await client.post(
+                f"{kb_url}/EWLogin",
+                data={"login": username, "password": password, "KB": kb_name}
+            )
+            
+            if login_response.status_code != 200:
+                raise HTTPException(status_code=401, detail="Authentication failed")
+            
+            cookies = login_response.cookies
+            
+            # Get metadata/tables
+            meta_response = await client.get(
+                f"{kb_url}/EWGetMetadata",
+                cookies=cookies,
+                params={"KB": kb_name}
+            )
+            
+            if meta_response.status_code == 200:
+                try:
+                    data = meta_response.json()
+                    tables = data.get("tables", [])
+                    return {"tables": tables}
+                except:
+                    return {"tables": [], "message": "Could not parse table list"}
+            
+            return {"tables": []}
+    except Exception as e:
+        logger.error(f"Agiloft tables error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== Batch Export Routes ====================
+
+class BatchExportRequest(BaseModel):
+    """Request for batch export"""
+    clause_numbers: List[str] = []
+    clause_ids: List[str] = []
+    include_full_text: bool = True
+    include_flowdown_info: bool = True
+    format: str = "pdf"  # pdf, json, csv
+
+@export_router.post("/batch")
+async def batch_export(export_request: BatchExportRequest, request: Request):
+    """Batch export multiple clauses to PDF, JSON, or CSV"""
+    user = await require_auth(request)
+    
+    # Collect all clauses
+    clause_docs = []
+    
+    # By number
+    for clause_num in export_request.clause_numbers:
+        clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
+        if clause:
+            clause_docs.append(clause)
+    
+    # By ID
+    for clause_id in export_request.clause_ids:
+        clause = await db.clauses.find_one({"clause_id": clause_id}, {"_id": 0})
+        if clause and clause not in clause_docs:
+            clause_docs.append(clause)
+    
+    if not clause_docs:
+        raise HTTPException(status_code=404, detail="No clauses found for export")
+    
+    if export_request.format == "json":
+        # Return as JSON
+        return {
+            "export_date": datetime.now(timezone.utc).isoformat(),
+            "total_clauses": len(clause_docs),
+            "clauses": clause_docs
+        }
+    
+    elif export_request.format == "csv":
+        # Generate CSV
+        import csv
+        
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        
+        # Header
+        headers = ["Number", "Title", "Type", "Flowdown Required"]
+        if export_request.include_full_text:
+            headers.append("Text")
+        writer.writerow(headers)
+        
+        # Data rows
+        for clause in clause_docs:
+            row = [
+                clause.get("number", ""),
+                clause.get("title", ""),
+                clause.get("type", ""),
+                "Yes" if clause.get("flowdown_required") else "No"
+            ]
+            if export_request.include_full_text:
+                row.append(clause.get("text", "")[:5000])  # Limit text in CSV
+            writer.writerow(row)
+        
+        csv_content = buffer.getvalue()
+        
+        return StreamingResponse(
+            io.BytesIO(csv_content.encode('utf-8')),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=clauses_export.csv"}
+        )
+    
+    else:  # PDF
+        # Generate comprehensive PDF
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buffer, 
+            pagesize=letter,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=72
+        )
+        styles = getSampleStyleSheet()
+        
+        # Custom styles
+        title_style = styles['Title']
+        heading_style = styles['Heading2']
+        normal_style = styles['Normal']
+        
+        story = []
+        
+        # Title page
+        story.append(Paragraph("Federal Clause Export Report", title_style))
+        story.append(Spacer(1, 0.3*inch))
+        story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", normal_style))
+        story.append(Paragraph(f"Total Clauses: {len(clause_docs)}", normal_style))
+        story.append(Paragraph(f"Exported by: {user.name}", normal_style))
+        story.append(Spacer(1, 0.5*inch))
+        
+        # Table of Contents
+        story.append(Paragraph("Table of Contents", heading_style))
+        story.append(Spacer(1, 0.2*inch))
+        for i, clause in enumerate(clause_docs, 1):
+            story.append(Paragraph(f"{i}. {clause.get('number', 'N/A')} - {clause.get('title', 'Untitled')}", normal_style))
+        story.append(Spacer(1, 0.5*inch))
+        
+        # Clause details
+        for clause in clause_docs:
+            story.append(Paragraph(f"{clause.get('number', 'N/A')}", heading_style))
+            story.append(Paragraph(f"<b>{clause.get('title', 'Untitled')}</b>", normal_style))
+            story.append(Spacer(1, 0.1*inch))
+            
+            # Metadata
+            story.append(Paragraph(f"<b>Type:</b> {clause.get('type', 'N/A')}", normal_style))
+            
+            if export_request.include_flowdown_info:
+                flowdown = "Yes" if clause.get('flowdown_required') else "No"
+                story.append(Paragraph(f"<b>Flowdown Required:</b> {flowdown}", normal_style))
+                
+                if clause.get('threshold_amount'):
+                    story.append(Paragraph(f"<b>Threshold:</b> ${clause['threshold_amount']:,.0f}", normal_style))
+                
+                if clause.get('contract_types'):
+                    story.append(Paragraph(f"<b>Contract Types:</b> {', '.join(clause['contract_types'])}", normal_style))
+            
+            if clause.get('source'):
+                story.append(Paragraph(f"<b>Source:</b> {clause['source']}", normal_style))
+            
+            story.append(Spacer(1, 0.2*inch))
+            
+            # Summary
+            if clause.get('summary'):
+                story.append(Paragraph("<b>Summary:</b>", normal_style))
+                story.append(Paragraph(clause['summary'], normal_style))
+                story.append(Spacer(1, 0.1*inch))
+            
+            # Full text
+            if export_request.include_full_text and clause.get('text'):
+                story.append(Paragraph("<b>Full Text:</b>", normal_style))
+                # Split long text into paragraphs
+                text = clause['text'][:10000]  # Limit text length
+                for para in text.split('\n\n'):
+                    if para.strip():
+                        story.append(Paragraph(para.strip(), normal_style))
+                        story.append(Spacer(1, 0.1*inch))
+            
+            # Keywords
+            if clause.get('keywords'):
+                story.append(Paragraph(f"<b>Keywords:</b> {', '.join(clause['keywords'])}", normal_style))
+            
+            story.append(Spacer(1, 0.4*inch))
+        
+        doc.build(story)
+        buffer.seek(0)
+        
+        filename = f"clause_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        
+        return StreamingResponse(
+            buffer,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+
+@export_router.post("/flowdown-report")
+async def export_flowdown_report(
+    contract_type: str,
+    contract_value: float,
+    clauses: List[str],
+    request: Request
+):
+    """Export a flowdown analysis report as PDF"""
+    user = await require_auth(request)
+    
+    # Run flowdown analysis
+    flowdown_clauses = await db.clauses.find(
+        {"flowdown_required": True},
+        {"_id": 0}
+    ).to_list(100)
+    
+    applicable = []
+    for clause in flowdown_clauses:
+        threshold = clause.get("threshold_amount", 0) or 0
+        contract_types = clause.get("contract_types", [])
+        
+        if contract_value >= threshold:
+            if "All" in contract_types or contract_type in contract_types or not contract_types:
+                applicable.append(clause)
+    
+    present = [c for c in applicable if c["number"] in clauses]
+    missing = [c for c in applicable if c["number"] not in clauses]
+    
+    # Generate PDF report
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    styles = getSampleStyleSheet()
+    story = []
+    
+    # Title
+    story.append(Paragraph("Flowdown Analysis Report", styles['Title']))
+    story.append(Spacer(1, 0.3*inch))
+    story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal']))
+    story.append(Paragraph(f"Contract Type: {contract_type}", styles['Normal']))
+    story.append(Paragraph(f"Contract Value: ${contract_value:,.2f}", styles['Normal']))
+    story.append(Spacer(1, 0.5*inch))
+    
+    # Summary
+    story.append(Paragraph("Summary", styles['Heading2']))
+    story.append(Paragraph(f"Total Required Flowdown Clauses: {len(applicable)}", styles['Normal']))
+    story.append(Paragraph(f"Present in Contract: {len(present)}", styles['Normal']))
+    story.append(Paragraph(f"Missing from Contract: {len(missing)}", styles['Normal']))
+    story.append(Spacer(1, 0.3*inch))
+    
+    # Missing clauses (critical)
+    if missing:
+        story.append(Paragraph("MISSING CLAUSES (Action Required)", styles['Heading2']))
+        for clause in missing:
+            story.append(Paragraph(f"• {clause['number']}: {clause['title']}", styles['Normal']))
+        story.append(Spacer(1, 0.3*inch))
+    
+    # Present clauses
+    if present:
+        story.append(Paragraph("Compliant Clauses", styles['Heading2']))
+        for clause in present:
+            story.append(Paragraph(f"✓ {clause['number']}: {clause['title']}", styles['Normal']))
+    
+    doc.build(story)
+    buffer.seek(0)
+    
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=flowdown_report.pdf"}
+    )
+
 # ==================== Include Routers ====================
 
 app.include_router(api_router)
