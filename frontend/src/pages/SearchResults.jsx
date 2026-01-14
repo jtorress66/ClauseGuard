@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Search, Filter, Star, BookOpen, Shield, ArrowLeft, Sparkles, Save, X } from "lucide-react";
+import { Search, Filter, Star, BookOpen, ArrowLeft, Sparkles, Save, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { API } from "@/App";
+import { ClauseGuardLogo } from "@/components/ClauseGuardLogo";
 
 export default function SearchResults() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -149,7 +150,7 @@ export default function SearchResults() {
             </Button>
             
             <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate("/")}>
-              <img src="https://customer-assets.emergentagent.com/job_f0e5b629-8260-447a-b845-dab293529025/artifacts/gvlwnwlo_image.png" alt="ClauseGuard" className="w-7 h-7" />
+              <ClauseGuardLogo className="w-7 h-7" variant="light" />
               <span className="font-heading font-bold text-lg text-navy-900">ClauseGuard</span>
             </div>
           </div>

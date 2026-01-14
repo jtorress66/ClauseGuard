@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { 
-  Search, FileText, Download, Shield, LogOut, Star, 
+  Search, FileText, Download, LogOut, Star, 
   Clock, Upload, ChevronRight, BarChart3, BookOpen, 
   Bell, Settings, Plus, Trash2
 } from "lucide-react";
@@ -17,6 +17,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "sonner";
 import { API } from "@/App";
+import { ClauseGuardLogo } from "@/components/ClauseGuardLogo";
 
 export default function Dashboard({ user }) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -122,7 +123,7 @@ export default function Dashboard({ user }) {
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-8">
               <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate("/")}>
-                <img src="https://customer-assets.emergentagent.com/job_f0e5b629-8260-447a-b845-dab293529025/artifacts/gvlwnwlo_image.png" alt="ClauseGuard" className="w-8 h-8" />
+                <ClauseGuardLogo className="w-8 h-8" variant="light" />
                 <span className="font-heading font-bold text-xl text-navy-900">ClauseGuard</span>
               </div>
               
