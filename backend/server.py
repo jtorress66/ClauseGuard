@@ -1,4 +1,5 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, UploadFile, File, Depends
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -6,10 +7,16 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List
+from typing import List, Optional, Dict, Any
 import uuid
-from datetime import datetime, timezone
-
+from datetime import datetime, timezone, timedelta
+import httpx
+import io
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.units import inch
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -19,55 +26,971 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
+# Create the main app
 app = FastAPI()
 
-# Create a router with the /api prefix
+# Create routers
 api_router = APIRouter(prefix="/api")
+auth_router = APIRouter(prefix="/api/auth")
+clauses_router = APIRouter(prefix="/api/clauses")
+contracts_router = APIRouter(prefix="/api/contracts")
+flowdown_router = APIRouter(prefix="/api/flowdown")
+user_router = APIRouter(prefix="/api/user")
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
+# ==================== Models ====================
+
+class User(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    user_id: str
+    email: str
+    name: str
+    picture: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class UserSession(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    session_token: str
+    expires_at: datetime
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class Clause(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    clause_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    number: str  # e.g., "52.212-4" or "252.204-7012"
+    title: str
+    type: str  # FAR, DFARS, Agency-specific
+    text: str
+    summary: Optional[str] = None
+    flowdown_required: bool = False
+    contract_types: List[str] = []  # e.g., ["Fixed-Price", "Cost-Reimbursement"]
+    threshold_amount: Optional[float] = None
+    last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    effective_date: Optional[datetime] = None
+    keywords: List[str] = []
+
+class Contract(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    contract_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    name: str
+    filename: str
+    content: str
+    clauses_found: List[str] = []
+    analysis_result: Optional[Dict[str, Any]] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class SavedSearch(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    search_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    query: str
+    filters: Dict[str, Any] = {}
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class Annotation(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    annotation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    clause_id: str
+    note: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class Favorite(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    favorite_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    clause_id: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class ComplianceChecklist(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    checklist_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    contract_id: str
+    items: List[Dict[str, Any]] = []
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+# ==================== Request/Response Models ====================
+
+class SessionRequest(BaseModel):
+    session_id: str
+
+class SearchRequest(BaseModel):
+    query: str
+    clause_type: Optional[str] = None
+    limit: int = 20
+
+class ContractUploadResponse(BaseModel):
+    contract_id: str
+    name: str
+    clauses_found: List[str]
+
+class AnnotationCreate(BaseModel):
+    clause_id: str
+    note: str
+
+class FlowdownRequest(BaseModel):
+    contract_type: str
+    contract_value: float
+    clauses: List[str]
+
+# ==================== Helper Functions ====================
+
+async def get_current_user(request: Request) -> Optional[User]:
+    """Extract and validate user from session token"""
+    session_token = request.cookies.get("session_token")
+    if not session_token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            session_token = auth_header.split(" ")[1]
     
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    if not session_token:
+        return None
+    
+    session_doc = await db.user_sessions.find_one({"session_token": session_token}, {"_id": 0})
+    if not session_doc:
+        return None
+    
+    expires_at = session_doc.get("expires_at")
+    if isinstance(expires_at, str):
+        expires_at = datetime.fromisoformat(expires_at)
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
+        return None
+    
+    user_doc = await db.users.find_one({"user_id": session_doc["user_id"]}, {"_id": 0})
+    if not user_doc:
+        return None
+    
+    return User(**user_doc)
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
+async def require_auth(request: Request) -> User:
+    """Require authentication - raises HTTPException if not authenticated"""
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
 
-# Add your routes to the router instead of directly to app
+async def get_ai_response(prompt: str, system_message: str = "You are a helpful assistant specialized in Federal Acquisition Regulations.") -> str:
+    """Get AI response using OpenAI via emergentintegrations"""
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        
+        api_key = os.environ.get("EMERGENT_LLM_KEY")
+        if not api_key:
+            logger.warning("EMERGENT_LLM_KEY not found, returning placeholder response")
+            return "AI analysis not available - API key not configured."
+        
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"clause-analysis-{uuid.uuid4()}",
+            system_message=system_message
+        ).with_model("openai", "gpt-5.2")
+        
+        user_message = UserMessage(text=prompt)
+        response = await chat.send_message(user_message)
+        return response
+    except Exception as e:
+        logger.error(f"AI response error: {e}")
+        return f"AI analysis temporarily unavailable: {str(e)}"
+
+# ==================== Initialize Sample Data ====================
+
+async def init_sample_clauses():
+    """Initialize sample FAR/DFARS clauses if not exists"""
+    count = await db.clauses.count_documents({})
+    if count > 0:
+        return
+    
+    sample_clauses = [
+        {
+            "clause_id": str(uuid.uuid4()),
+            "number": "52.212-4",
+            "title": "Contract Terms and Conditions—Commercial Products and Commercial Services",
+            "type": "FAR",
+            "text": "This clause sets forth the terms and conditions applicable to the acquisition of commercial products and commercial services. It includes provisions for inspection and acceptance, invoicing and payment, changes, disputes, and other standard commercial terms.",
+            "summary": "Standard terms for commercial acquisitions",
+            "flowdown_required": True,
+            "contract_types": ["Fixed-Price", "Time-and-Materials"],
+            "threshold_amount": 0,
+            "keywords": ["commercial", "terms", "conditions", "payment", "disputes"],
+            "last_updated": datetime.now(timezone.utc).isoformat()
+        },
+        {
+            "clause_id": str(uuid.uuid4()),
+            "number": "252.204-7012",
+            "title": "Safeguarding Covered Defense Information and Cyber Incident Reporting",
+            "type": "DFARS",
+            "text": "This clause requires contractors to provide adequate security on all covered contractor information systems and to report cyber incidents within 72 hours. Contractors must implement NIST SP 800-171 requirements.",
+            "summary": "Cybersecurity requirements for defense contractors",
+            "flowdown_required": True,
+            "contract_types": ["All"],
+            "threshold_amount": 0,
+            "keywords": ["cybersecurity", "NIST", "defense", "CUI", "incident reporting"],
+            "last_updated": datetime.now(timezone.utc).isoformat()
+        },
+        {
+            "clause_id": str(uuid.uuid4()),
+            "number": "52.219-8",
+            "title": "Utilization of Small Business Concerns",
+            "type": "FAR",
+            "text": "This clause requires contractors to provide maximum practicable opportunities to small business concerns, veteran-owned small business concerns, service-disabled veteran-owned small business concerns, HUBZone small business concerns, small disadvantaged business concerns, and women-owned small business concerns.",
+            "summary": "Small business subcontracting requirements",
+            "flowdown_required": True,
+            "contract_types": ["All"],
+            "threshold_amount": 750000,
+            "keywords": ["small business", "subcontracting", "HUBZone", "SDVOSB", "WOSB"],
+            "last_updated": datetime.now(timezone.utc).isoformat()
+        },
+        {
+            "clause_id": str(uuid.uuid4()),
+            "number": "52.222-26",
+            "title": "Equal Opportunity",
+            "type": "FAR",
+            "text": "This clause prohibits discrimination and requires contractors to take affirmative action to ensure equal opportunity in employment without regard to race, color, religion, sex, sexual orientation, gender identity, national origin, disability, or status as a protected veteran.",
+            "summary": "Equal employment opportunity requirements",
+            "flowdown_required": True,
+            "contract_types": ["All"],
+            "threshold_amount": 10000,
+            "keywords": ["equal opportunity", "discrimination", "affirmative action", "EEO"],
+            "last_updated": datetime.now(timezone.utc).isoformat()
+        },
+        {
+            "clause_id": str(uuid.uuid4()),
+            "number": "52.223-3",
+            "title": "Hazardous Material Identification and Material Safety Data",
+            "type": "FAR",
+            "text": "This clause requires contractors to identify hazardous materials delivered under the contract and provide Safety Data Sheets (SDS) for those materials in accordance with 29 CFR 1910.1200.",
+            "summary": "Hazardous material disclosure requirements",
+            "flowdown_required": False,
+            "contract_types": ["Supply", "Services"],
+            "threshold_amount": 0,
+            "keywords": ["hazardous", "safety", "SDS", "OSHA", "materials"],
+            "last_updated": datetime.now(timezone.utc).isoformat()
+        },
+        {
+            "clause_id": str(uuid.uuid4()),
+            "number": "252.225-7001",
+            "title": "Buy American and Balance of Payments Program",
+            "type": "DFARS",
+            "text": "This clause implements the Buy American statute and the Balance of Payments Program for defense acquisitions. It requires delivery of domestic end products unless specified exceptions apply.",
+            "summary": "Buy American requirements for defense contracts",
+            "flowdown_required": True,
+            "contract_types": ["Supply"],
+            "threshold_amount": 0,
+            "keywords": ["Buy American", "domestic", "defense", "foreign"],
+            "last_updated": datetime.now(timezone.utc).isoformat()
+        },
+        {
+            "clause_id": str(uuid.uuid4()),
+            "number": "52.232-40",
+            "title": "Providing Accelerated Payments to Small Business Subcontractors",
+            "type": "FAR",
+            "text": "This clause requires prime contractors to make accelerated payments to small business subcontractors to the maximum extent practicable when the Government makes accelerated payments to the prime contractor.",
+            "summary": "Accelerated payment flow-down to small business",
+            "flowdown_required": True,
+            "contract_types": ["All"],
+            "threshold_amount": 0,
+            "keywords": ["payment", "small business", "accelerated", "subcontractor"],
+            "last_updated": datetime.now(timezone.utc).isoformat()
+        },
+        {
+            "clause_id": str(uuid.uuid4()),
+            "number": "52.244-6",
+            "title": "Subcontracts for Commercial Products and Commercial Services",
+            "type": "FAR",
+            "text": "This clause applies to subcontracts for commercial products or commercial services. It specifies which FAR clauses must be flowed down to subcontractors at all tiers.",
+            "summary": "Commercial subcontract flow-down requirements",
+            "flowdown_required": True,
+            "contract_types": ["All"],
+            "threshold_amount": 0,
+            "keywords": ["subcontract", "commercial", "flow-down", "tiers"],
+            "last_updated": datetime.now(timezone.utc).isoformat()
+        },
+        {
+            "clause_id": str(uuid.uuid4()),
+            "number": "252.227-7013",
+            "title": "Rights in Technical Data—Noncommercial Items",
+            "type": "DFARS",
+            "text": "This clause governs the Government's rights in technical data pertaining to noncommercial items. It establishes categories of data rights including unlimited rights, government purpose rights, and limited rights.",
+            "summary": "Technical data rights for noncommercial defense items",
+            "flowdown_required": True,
+            "contract_types": ["R&D", "Supply"],
+            "threshold_amount": 0,
+            "keywords": ["technical data", "rights", "IP", "noncommercial", "defense"],
+            "last_updated": datetime.now(timezone.utc).isoformat()
+        },
+        {
+            "clause_id": str(uuid.uuid4()),
+            "number": "52.203-13",
+            "title": "Contractor Code of Business Ethics and Conduct",
+            "type": "FAR",
+            "text": "This clause requires contractors to have a written code of business ethics and conduct, and an employee business ethics and compliance training program and internal control system that facilitate timely discovery and disclosure of improper conduct.",
+            "summary": "Ethics and compliance program requirements",
+            "flowdown_required": True,
+            "contract_types": ["All"],
+            "threshold_amount": 6000000,
+            "keywords": ["ethics", "compliance", "conduct", "training", "disclosure"],
+            "last_updated": datetime.now(timezone.utc).isoformat()
+        }
+    ]
+    
+    await db.clauses.insert_many(sample_clauses)
+    logger.info(f"Initialized {len(sample_clauses)} sample clauses")
+
+# ==================== Auth Routes ====================
+
+# REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+
+@auth_router.post("/session")
+async def create_session(request: SessionRequest, response: Response):
+    """Exchange session_id for session_token after Google OAuth"""
+    try:
+        async with httpx.AsyncClient() as client:
+            auth_response = await client.get(
+                "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+                headers={"X-Session-ID": request.session_id}
+            )
+            
+            if auth_response.status_code != 200:
+                raise HTTPException(status_code=401, detail="Invalid session")
+            
+            auth_data = auth_response.json()
+    except httpx.HTTPError as e:
+        logger.error(f"Auth service error: {e}")
+        raise HTTPException(status_code=500, detail="Authentication service unavailable")
+    
+    # Find or create user
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+    existing_user = await db.users.find_one({"email": auth_data["email"]}, {"_id": 0})
+    
+    if existing_user:
+        user_id = existing_user["user_id"]
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"name": auth_data["name"], "picture": auth_data.get("picture")}}
+        )
+    else:
+        new_user = {
+            "user_id": user_id,
+            "email": auth_data["email"],
+            "name": auth_data["name"],
+            "picture": auth_data.get("picture"),
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.users.insert_one(new_user)
+    
+    # Create session
+    session_token = auth_data["session_token"]
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    
+    session_doc = {
+        "session_id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "session_token": session_token,
+        "expires_at": expires_at.isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.user_sessions.insert_one(session_doc)
+    
+    # Set cookie
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=7 * 24 * 60 * 60
+    )
+    
+    user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    return user_doc
+
+@auth_router.get("/me")
+async def get_current_user_info(request: Request):
+    """Get current authenticated user info"""
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user.model_dump()
+
+@auth_router.post("/logout")
+async def logout(request: Request, response: Response):
+    """Logout user and clear session"""
+    session_token = request.cookies.get("session_token")
+    if session_token:
+        await db.user_sessions.delete_one({"session_token": session_token})
+    
+    response.delete_cookie(key="session_token", path="/")
+    return {"message": "Logged out successfully"}
+
+# ==================== Clauses Routes ====================
+
+@clauses_router.get("/search")
+async def search_clauses(query: str, clause_type: Optional[str] = None, limit: int = 20):
+    """Search clauses with optional AI enhancement"""
+    filter_query = {}
+    
+    if clause_type and clause_type != "All":
+        filter_query["type"] = clause_type
+    
+    # Text search on multiple fields
+    if query:
+        filter_query["$or"] = [
+            {"number": {"$regex": query, "$options": "i"}},
+            {"title": {"$regex": query, "$options": "i"}},
+            {"text": {"$regex": query, "$options": "i"}},
+            {"keywords": {"$elemMatch": {"$regex": query, "$options": "i"}}}
+        ]
+    
+    clauses = await db.clauses.find(filter_query, {"_id": 0}).limit(limit).to_list(limit)
+    return {"clauses": clauses, "total": len(clauses)}
+
+@clauses_router.get("/ai-search")
+async def ai_search_clauses(query: str, request: Request):
+    """AI-powered intelligent clause search"""
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required for AI search")
+    
+    # Get all clauses for context
+    all_clauses = await db.clauses.find({}, {"_id": 0, "clause_id": 1, "number": 1, "title": 1, "type": 1, "summary": 1, "keywords": 1}).to_list(100)
+    
+    clauses_context = "\n".join([
+        f"- {c['number']}: {c['title']} ({c['type']}) - {c.get('summary', '')}"
+        for c in all_clauses
+    ])
+    
+    prompt = f"""Based on the user's query, identify the most relevant FAR/DFARS clauses from this list:
+
+Available Clauses:
+{clauses_context}
+
+User Query: {query}
+
+Return a JSON array of the most relevant clause numbers (e.g., ["52.212-4", "252.204-7012"]) and a brief explanation of why each is relevant. Format:
+{{"relevant_clauses": ["clause_number1", "clause_number2"], "explanations": {{"clause_number1": "reason", "clause_number2": "reason"}}}}"""
+
+    ai_response = await get_ai_response(prompt)
+    
+    # Parse AI response and get full clause details
+    try:
+        import json
+        # Try to extract JSON from response
+        json_start = ai_response.find('{')
+        json_end = ai_response.rfind('}') + 1
+        if json_start >= 0 and json_end > json_start:
+            ai_result = json.loads(ai_response[json_start:json_end])
+            relevant_numbers = ai_result.get("relevant_clauses", [])
+            explanations = ai_result.get("explanations", {})
+        else:
+            relevant_numbers = []
+            explanations = {}
+    except:
+        relevant_numbers = []
+        explanations = {}
+    
+    # Fetch full clause details
+    clauses = []
+    for number in relevant_numbers:
+        clause = await db.clauses.find_one({"number": number}, {"_id": 0})
+        if clause:
+            clause["ai_explanation"] = explanations.get(number, "")
+            clauses.append(clause)
+    
+    return {
+        "clauses": clauses,
+        "ai_analysis": ai_response,
+        "total": len(clauses)
+    }
+
+@clauses_router.get("/{clause_id}")
+async def get_clause(clause_id: str):
+    """Get a specific clause by ID"""
+    clause = await db.clauses.find_one({"clause_id": clause_id}, {"_id": 0})
+    if not clause:
+        raise HTTPException(status_code=404, detail="Clause not found")
+    return clause
+
+@clauses_router.get("/by-number/{clause_number:path}")
+async def get_clause_by_number(clause_number: str):
+    """Get a specific clause by number"""
+    clause = await db.clauses.find_one({"number": clause_number}, {"_id": 0})
+    if not clause:
+        raise HTTPException(status_code=404, detail="Clause not found")
+    return clause
+
+# ==================== Contracts Routes ====================
+
+@contracts_router.post("/upload")
+async def upload_contract(request: Request, file: UploadFile = File(...)):
+    """Upload and analyze a contract"""
+    user = await require_auth(request)
+    
+    content = await file.read()
+    text_content = ""
+    
+    # Try to extract text from PDF or treat as text
+    if file.filename.endswith('.pdf'):
+        try:
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(content)) as pdf:
+                text_content = "\n".join([page.extract_text() or "" for page in pdf.pages])
+        except Exception as e:
+            logger.error(f"PDF extraction error: {e}")
+            text_content = content.decode('utf-8', errors='ignore')
+    else:
+        text_content = content.decode('utf-8', errors='ignore')
+    
+    # Find clause references in the contract
+    all_clauses = await db.clauses.find({}, {"_id": 0, "number": 1}).to_list(1000)
+    clauses_found = []
+    for clause in all_clauses:
+        if clause["number"] in text_content:
+            clauses_found.append(clause["number"])
+    
+    # Create contract record
+    contract = Contract(
+        user_id=user.user_id,
+        name=file.filename,
+        filename=file.filename,
+        content=text_content[:50000],  # Limit stored content
+        clauses_found=clauses_found
+    )
+    
+    contract_dict = contract.model_dump()
+    contract_dict["created_at"] = contract_dict["created_at"].isoformat()
+    await db.contracts.insert_one(contract_dict)
+    
+    return ContractUploadResponse(
+        contract_id=contract.contract_id,
+        name=contract.name,
+        clauses_found=clauses_found
+    )
+
+@contracts_router.get("/")
+async def get_contracts(request: Request):
+    """Get all contracts for current user"""
+    user = await require_auth(request)
+    contracts = await db.contracts.find(
+        {"user_id": user.user_id},
+        {"_id": 0, "content": 0}
+    ).to_list(100)
+    return {"contracts": contracts}
+
+@contracts_router.get("/{contract_id}")
+async def get_contract(contract_id: str, request: Request):
+    """Get a specific contract"""
+    user = await require_auth(request)
+    contract = await db.contracts.find_one(
+        {"contract_id": contract_id, "user_id": user.user_id},
+        {"_id": 0}
+    )
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    return contract
+
+@contracts_router.post("/{contract_id}/analyze")
+async def analyze_contract(contract_id: str, request: Request):
+    """AI-powered contract analysis against FAR/DFARS requirements"""
+    user = await require_auth(request)
+    
+    contract = await db.contracts.find_one(
+        {"contract_id": contract_id, "user_id": user.user_id},
+        {"_id": 0}
+    )
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    
+    # Get clause details for found clauses
+    clauses_details = []
+    for clause_num in contract.get("clauses_found", []):
+        clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
+        if clause:
+            clauses_details.append(f"{clause['number']}: {clause['title']}")
+    
+    prompt = f"""Analyze this government contract against FAR/DFARS requirements:
+
+Contract Content (excerpt):
+{contract.get('content', '')[:5000]}
+
+Clauses Referenced in Contract:
+{chr(10).join(clauses_details) if clauses_details else 'No standard clauses found'}
+
+Provide a compliance analysis including:
+1. Missing required clauses based on contract type
+2. Potential compliance gaps
+3. Recommendations for improvement
+4. Risk assessment (High/Medium/Low)
+
+Format as JSON:
+{{"missing_clauses": [], "compliance_gaps": [], "recommendations": [], "risk_level": "Medium", "summary": ""}}"""
+
+    ai_response = await get_ai_response(prompt)
+    
+    # Parse and store analysis
+    try:
+        import json
+        json_start = ai_response.find('{')
+        json_end = ai_response.rfind('}') + 1
+        if json_start >= 0 and json_end > json_start:
+            analysis = json.loads(ai_response[json_start:json_end])
+        else:
+            analysis = {"raw_analysis": ai_response}
+    except:
+        analysis = {"raw_analysis": ai_response}
+    
+    await db.contracts.update_one(
+        {"contract_id": contract_id},
+        {"$set": {"analysis_result": analysis}}
+    )
+    
+    return {"contract_id": contract_id, "analysis": analysis}
+
+@contracts_router.post("/compare")
+async def compare_contracts(contract_id_1: str, contract_id_2: str, request: Request):
+    """Compare two contracts"""
+    user = await require_auth(request)
+    
+    contract1 = await db.contracts.find_one(
+        {"contract_id": contract_id_1, "user_id": user.user_id},
+        {"_id": 0}
+    )
+    contract2 = await db.contracts.find_one(
+        {"contract_id": contract_id_2, "user_id": user.user_id},
+        {"_id": 0}
+    )
+    
+    if not contract1 or not contract2:
+        raise HTTPException(status_code=404, detail="One or both contracts not found")
+    
+    prompt = f"""Compare these two government contracts:
+
+Contract 1 ({contract1.get('name', 'Unknown')}):
+Clauses: {', '.join(contract1.get('clauses_found', []))}
+Content excerpt: {contract1.get('content', '')[:2000]}
+
+Contract 2 ({contract2.get('name', 'Unknown')}):
+Clauses: {', '.join(contract2.get('clauses_found', []))}
+Content excerpt: {contract2.get('content', '')[:2000]}
+
+Provide a comparison including:
+1. Clauses present in Contract 1 but not in Contract 2
+2. Clauses present in Contract 2 but not in Contract 1
+3. Key differences in terms and conditions
+4. Recommendations
+
+Format as JSON:
+{{"only_in_contract_1": [], "only_in_contract_2": [], "common_clauses": [], "key_differences": [], "recommendations": []}}"""
+
+    ai_response = await get_ai_response(prompt)
+    
+    try:
+        import json
+        json_start = ai_response.find('{')
+        json_end = ai_response.rfind('}') + 1
+        if json_start >= 0 and json_end > json_start:
+            comparison = json.loads(ai_response[json_start:json_end])
+        else:
+            comparison = {"raw_comparison": ai_response}
+    except:
+        comparison = {"raw_comparison": ai_response}
+    
+    return {"comparison": comparison}
+
+# ==================== Flowdown Routes ====================
+
+@flowdown_router.post("/analyze")
+async def analyze_flowdown(flowdown_request: FlowdownRequest, request: Request):
+    """Analyze which clauses must flow down to subcontractors"""
+    user = await require_auth(request)
+    
+    # Get all flowdown-required clauses
+    flowdown_clauses = await db.clauses.find(
+        {"flowdown_required": True},
+        {"_id": 0}
+    ).to_list(100)
+    
+    # Filter by threshold and contract type
+    applicable_clauses = []
+    for clause in flowdown_clauses:
+        threshold = clause.get("threshold_amount", 0) or 0
+        contract_types = clause.get("contract_types", [])
+        
+        if flowdown_request.contract_value >= threshold:
+            if "All" in contract_types or flowdown_request.contract_type in contract_types or not contract_types:
+                applicable_clauses.append(clause)
+    
+    # Check which are in the provided clauses list
+    in_contract = []
+    missing = []
+    for clause in applicable_clauses:
+        if clause["number"] in flowdown_request.clauses:
+            in_contract.append(clause)
+        else:
+            missing.append(clause)
+    
+    return {
+        "required_flowdown_clauses": [c["number"] for c in applicable_clauses],
+        "present_in_contract": [c["number"] for c in in_contract],
+        "missing_from_contract": [c["number"] for c in missing],
+        "clause_details": applicable_clauses
+    }
+
+# ==================== User Routes ====================
+
+@user_router.get("/saved-searches")
+async def get_saved_searches(request: Request):
+    """Get user's saved searches"""
+    user = await require_auth(request)
+    searches = await db.saved_searches.find(
+        {"user_id": user.user_id},
+        {"_id": 0}
+    ).to_list(100)
+    return {"saved_searches": searches}
+
+@user_router.post("/saved-searches")
+async def save_search(query: str, filters: Dict[str, Any] = {}, request: Request = None):
+    """Save a search"""
+    user = await require_auth(request)
+    search = SavedSearch(user_id=user.user_id, query=query, filters=filters)
+    search_dict = search.model_dump()
+    search_dict["created_at"] = search_dict["created_at"].isoformat()
+    await db.saved_searches.insert_one(search_dict)
+    return search_dict
+
+@user_router.delete("/saved-searches/{search_id}")
+async def delete_saved_search(search_id: str, request: Request):
+    """Delete a saved search"""
+    user = await require_auth(request)
+    result = await db.saved_searches.delete_one(
+        {"search_id": search_id, "user_id": user.user_id}
+    )
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Saved search not found")
+    return {"message": "Search deleted"}
+
+@user_router.get("/favorites")
+async def get_favorites(request: Request):
+    """Get user's favorite clauses"""
+    user = await require_auth(request)
+    favorites = await db.favorites.find(
+        {"user_id": user.user_id},
+        {"_id": 0}
+    ).to_list(100)
+    
+    # Get full clause details
+    result = []
+    for fav in favorites:
+        clause = await db.clauses.find_one({"clause_id": fav["clause_id"]}, {"_id": 0})
+        if clause:
+            result.append({**fav, "clause": clause})
+    
+    return {"favorites": result}
+
+@user_router.post("/favorites")
+async def add_favorite(clause_id: str, request: Request):
+    """Add a clause to favorites"""
+    user = await require_auth(request)
+    
+    # Check if already favorited
+    existing = await db.favorites.find_one(
+        {"user_id": user.user_id, "clause_id": clause_id},
+        {"_id": 0}
+    )
+    if existing:
+        return existing
+    
+    favorite = Favorite(user_id=user.user_id, clause_id=clause_id)
+    fav_dict = favorite.model_dump()
+    fav_dict["created_at"] = fav_dict["created_at"].isoformat()
+    await db.favorites.insert_one(fav_dict)
+    return fav_dict
+
+@user_router.delete("/favorites/{clause_id}")
+async def remove_favorite(clause_id: str, request: Request):
+    """Remove a clause from favorites"""
+    user = await require_auth(request)
+    result = await db.favorites.delete_one(
+        {"clause_id": clause_id, "user_id": user.user_id}
+    )
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Favorite not found")
+    return {"message": "Favorite removed"}
+
+@user_router.get("/annotations")
+async def get_annotations(request: Request, clause_id: Optional[str] = None):
+    """Get user's annotations"""
+    user = await require_auth(request)
+    filter_query = {"user_id": user.user_id}
+    if clause_id:
+        filter_query["clause_id"] = clause_id
+    
+    annotations = await db.annotations.find(filter_query, {"_id": 0}).to_list(100)
+    return {"annotations": annotations}
+
+@user_router.post("/annotations")
+async def create_annotation(annotation_data: AnnotationCreate, request: Request):
+    """Create a new annotation"""
+    user = await require_auth(request)
+    annotation = Annotation(
+        user_id=user.user_id,
+        clause_id=annotation_data.clause_id,
+        note=annotation_data.note
+    )
+    ann_dict = annotation.model_dump()
+    ann_dict["created_at"] = ann_dict["created_at"].isoformat()
+    await db.annotations.insert_one(ann_dict)
+    return ann_dict
+
+@user_router.delete("/annotations/{annotation_id}")
+async def delete_annotation(annotation_id: str, request: Request):
+    """Delete an annotation"""
+    user = await require_auth(request)
+    result = await db.annotations.delete_one(
+        {"annotation_id": annotation_id, "user_id": user.user_id}
+    )
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Annotation not found")
+    return {"message": "Annotation deleted"}
+
+# ==================== Export Routes ====================
+
+@api_router.post("/export/pdf")
+async def export_to_pdf(clauses: List[str], request: Request):
+    """Export clauses to PDF"""
+    user = await require_auth(request)
+    
+    # Get clause details
+    clause_docs = []
+    for clause_num in clauses:
+        clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
+        if clause:
+            clause_docs.append(clause)
+    
+    # Generate PDF
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    styles = getSampleStyleSheet()
+    story = []
+    
+    # Title
+    story.append(Paragraph("Federal Clause Report", styles['Title']))
+    story.append(Spacer(1, 0.5*inch))
+    story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal']))
+    story.append(Spacer(1, 0.5*inch))
+    
+    for clause in clause_docs:
+        story.append(Paragraph(f"{clause['number']}: {clause['title']}", styles['Heading2']))
+        story.append(Paragraph(f"Type: {clause['type']}", styles['Normal']))
+        story.append(Paragraph(f"Flowdown Required: {'Yes' if clause.get('flowdown_required') else 'No'}", styles['Normal']))
+        if clause.get('summary'):
+            story.append(Paragraph(f"Summary: {clause['summary']}", styles['Normal']))
+        story.append(Spacer(1, 0.3*inch))
+    
+    doc.build(story)
+    buffer.seek(0)
+    
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=clause_report.pdf"}
+    )
+
+# ==================== Compliance Checklist Routes ====================
+
+@api_router.post("/checklist/generate")
+async def generate_checklist(contract_id: str, request: Request):
+    """Generate a compliance checklist for a contract"""
+    user = await require_auth(request)
+    
+    contract = await db.contracts.find_one(
+        {"contract_id": contract_id, "user_id": user.user_id},
+        {"_id": 0}
+    )
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    
+    # Get clause details
+    checklist_items = []
+    for clause_num in contract.get("clauses_found", []):
+        clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
+        if clause:
+            checklist_items.append({
+                "clause_number": clause["number"],
+                "clause_title": clause["title"],
+                "requirement": clause.get("summary", clause["title"]),
+                "status": "pending",
+                "notes": ""
+            })
+    
+    checklist = ComplianceChecklist(
+        user_id=user.user_id,
+        contract_id=contract_id,
+        items=checklist_items
+    )
+    
+    checklist_dict = checklist.model_dump()
+    checklist_dict["created_at"] = checklist_dict["created_at"].isoformat()
+    await db.checklists.insert_one(checklist_dict)
+    
+    return checklist_dict
+
+@api_router.get("/checklist/{checklist_id}")
+async def get_checklist(checklist_id: str, request: Request):
+    """Get a compliance checklist"""
+    user = await require_auth(request)
+    checklist = await db.checklists.find_one(
+        {"checklist_id": checklist_id, "user_id": user.user_id},
+        {"_id": 0}
+    )
+    if not checklist:
+        raise HTTPException(status_code=404, detail="Checklist not found")
+    return checklist
+
+@api_router.put("/checklist/{checklist_id}/item/{item_index}")
+async def update_checklist_item(
+    checklist_id: str,
+    item_index: int,
+    status: str,
+    notes: str = "",
+    request: Request = None
+):
+    """Update a checklist item status"""
+    user = await require_auth(request)
+    
+    result = await db.checklists.update_one(
+        {"checklist_id": checklist_id, "user_id": user.user_id},
+        {"$set": {f"items.{item_index}.status": status, f"items.{item_index}.notes": notes}}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Checklist not found")
+    
+    return {"message": "Checklist item updated"}
+
+# ==================== Root Route ====================
+
 @api_router.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"message": "Federal Clause Management API", "version": "1.0.0"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
+# ==================== Include Routers ====================
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
-
-# Include the router in the main app
 app.include_router(api_router)
+app.include_router(auth_router)
+app.include_router(clauses_router)
+app.include_router(contracts_router)
+app.include_router(flowdown_router)
+app.include_router(user_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -77,12 +1000,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+@app.on_event("startup")
+async def startup_event():
+    await init_sample_clauses()
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
