@@ -201,6 +201,127 @@ async def get_ai_response(prompt: str, system_message: str = "You are a helpful 
         logger.error(f"AI response error: {e}")
         return f"AI analysis temporarily unavailable: {str(e)}"
 
+# ==================== Acquisition.gov Integration ====================
+
+async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict[str, Any]]:
+    """Fetch clause details from acquisition.gov"""
+    try:
+        # Determine if FAR or DFARS
+        if clause_number.startswith("252"):
+            base_url = f"https://www.acquisition.gov/dfars/part-252-solicitation-provisions-and-contract-clauses"
+            clause_type = "DFARS"
+        else:
+            # FAR clauses like 52.xxx-x
+            part = clause_number.split(".")[0]
+            base_url = f"https://www.acquisition.gov/far/part-{part}"
+            clause_type = "FAR"
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Try to fetch the clause page
+            response = await client.get(base_url, follow_redirects=True)
+            
+            if response.status_code == 200:
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Find the clause section
+                clause_section = None
+                for heading in soup.find_all(['h2', 'h3', 'h4']):
+                    if clause_number in heading.get_text():
+                        clause_section = heading
+                        break
+                
+                if clause_section:
+                    # Extract title from heading
+                    title_text = clause_section.get_text().strip()
+                    # Clean up title - remove clause number prefix
+                    title = title_text.replace(clause_number, "").strip()
+                    if title.startswith("-"):
+                        title = title[1:].strip()
+                    
+                    # Try to get the following paragraph as text
+                    next_elem = clause_section.find_next(['p', 'div'])
+                    text = ""
+                    if next_elem:
+                        # Get multiple paragraphs
+                        text_parts = []
+                        for sibling in clause_section.find_next_siblings()[:10]:
+                            if sibling.name in ['h2', 'h3', 'h4']:
+                                break
+                            text_parts.append(sibling.get_text().strip())
+                        text = "\n\n".join(text_parts)[:10000]  # Limit text size
+                    
+                    return {
+                        "clause_id": str(uuid.uuid4()),
+                        "number": clause_number,
+                        "title": title or f"Clause {clause_number}",
+                        "type": clause_type,
+                        "text": text or f"Full text available at acquisition.gov for clause {clause_number}",
+                        "summary": None,
+                        "flowdown_required": False,
+                        "contract_types": [],
+                        "threshold_amount": None,
+                        "keywords": [],
+                        "last_updated": datetime.now(timezone.utc).isoformat(),
+                        "source": "acquisition.gov"
+                    }
+        
+        return None
+    except Exception as e:
+        logger.error(f"Error fetching from acquisition.gov: {e}")
+        return None
+
+async def fetch_far_index() -> List[Dict[str, str]]:
+    """Fetch FAR clause index from acquisition.gov"""
+    clauses = []
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Fetch Part 52 index (contract clauses)
+            response = await client.get(
+                "https://www.acquisition.gov/far/part-52",
+                follow_redirects=True
+            )
+            
+            if response.status_code == 200:
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Find all clause links
+                for link in soup.find_all('a'):
+                    href = link.get('href', '')
+                    text = link.get_text().strip()
+                    
+                    # Match FAR clause pattern (52.xxx-x)
+                    import re
+                    match = re.search(r'52\.\d{3}-\d+', text)
+                    if match:
+                        clause_num = match.group()
+                        # Extract title after the clause number
+                        title = text.replace(clause_num, "").strip()
+                        if title.startswith("-"):
+                            title = title[1:].strip()
+                        
+                        clauses.append({
+                            "number": clause_num,
+                            "title": title or f"FAR Clause {clause_num}",
+                            "type": "FAR"
+                        })
+                
+                # Remove duplicates
+                seen = set()
+                unique_clauses = []
+                for c in clauses:
+                    if c["number"] not in seen:
+                        seen.add(c["number"])
+                        unique_clauses.append(c)
+                
+                return unique_clauses[:100]  # Limit to first 100
+                
+    except Exception as e:
+        logger.error(f"Error fetching FAR index: {e}")
+    
+    return clauses
+
 # ==================== Initialize Sample Data ====================
 
 async def init_sample_clauses():
