@@ -204,68 +204,120 @@ async def get_ai_response(prompt: str, system_message: str = "You are a helpful 
 # ==================== Acquisition.gov Integration ====================
 
 async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict[str, Any]]:
-    """Fetch clause details from acquisition.gov"""
+    """Fetch clause details from acquisition.gov with full text extraction"""
     try:
-        # Determine if FAR or DFARS
-        if clause_number.startswith("252"):
-            base_url = f"https://www.acquisition.gov/dfars/part-252-solicitation-provisions-and-contract-clauses"
-            clause_type = "DFARS"
-        else:
-            # FAR clauses like 52.xxx-x
-            part = clause_number.split(".")[0]
-            base_url = f"https://www.acquisition.gov/far/part-{part}"
-            clause_type = "FAR"
+        from bs4 import BeautifulSoup
+        import re
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            # Try to fetch the clause page
-            response = await client.get(base_url, follow_redirects=True)
+        # Determine if FAR or DFARS and build the direct clause URL
+        if clause_number.startswith("252"):
+            # DFARS clause - format: 252.xxx-xxxx
+            clause_type = "DFARS"
+            # DFARS clauses are at acquisition.gov/dfars/252.xxx-xxxx
+            clause_url = f"https://www.acquisition.gov/dfars/{clause_number.lower()}"
+        else:
+            # FAR clause - format: 52.xxx-xx
+            clause_type = "FAR"
+            # FAR clauses are at acquisition.gov/far/52.xxx-xx
+            clause_url = f"https://www.acquisition.gov/far/{clause_number.lower()}"
+        
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            # Try direct clause URL first
+            response = await client.get(clause_url)
             
             if response.status_code == 200:
-                from bs4 import BeautifulSoup
                 soup = BeautifulSoup(response.text, 'html.parser')
                 
-                # Find the clause section
-                clause_section = None
-                for heading in soup.find_all(['h2', 'h3', 'h4']):
-                    if clause_number in heading.get_text():
-                        clause_section = heading
-                        break
+                # Extract title from page title or h1
+                title = ""
+                page_title = soup.find('title')
+                if page_title:
+                    title_text = page_title.get_text().strip()
+                    # Remove "FAR" or "DFARS" prefix and clause number
+                    title = re.sub(r'^(FAR|DFARS)\s*', '', title_text)
+                    title = re.sub(r'^\d+\.\d+-\d+\s*', '', title)
+                    title = title.replace('| Acquisition.GOV', '').strip()
                 
-                if clause_section:
-                    # Extract title from heading
-                    title_text = clause_section.get_text().strip()
-                    # Clean up title - remove clause number prefix
-                    title = title_text.replace(clause_number, "").strip()
-                    if title.startswith("-"):
-                        title = title[1:].strip()
-                    
-                    # Try to get the following paragraph as text
-                    next_elem = clause_section.find_next(['p', 'div'])
-                    text = ""
-                    if next_elem:
-                        # Get multiple paragraphs
-                        text_parts = []
-                        for sibling in clause_section.find_next_siblings()[:10]:
-                            if sibling.name in ['h2', 'h3', 'h4']:
-                                break
-                            text_parts.append(sibling.get_text().strip())
-                        text = "\n\n".join(text_parts)[:10000]  # Limit text size
-                    
-                    return {
-                        "clause_id": str(uuid.uuid4()),
-                        "number": clause_number,
-                        "title": title or f"Clause {clause_number}",
-                        "type": clause_type,
-                        "text": text or f"Full text available at acquisition.gov for clause {clause_number}",
-                        "summary": None,
-                        "flowdown_required": False,
-                        "contract_types": [],
-                        "threshold_amount": None,
-                        "keywords": [],
-                        "last_updated": datetime.now(timezone.utc).isoformat(),
-                        "source": "acquisition.gov"
-                    }
-        
+                if not title:
+                    h1 = soup.find('h1')
+                    if h1:
+                        title = h1.get_text().strip()
+                        title = re.sub(r'^\d+\.\d+-\d+\s*', '', title)
+                
+                # Extract full clause text from the main content area
+                text_parts = []
+                
+                # Look for the main content div
+                main_content = soup.find('div', class_='field--name-body') or \
+                               soup.find('article') or \
+                               soup.find('main') or \
+                               soup.find('div', class_='content')
+                
+                if main_content:
+                    # Get all paragraphs, lists, and text content
+                    for elem in main_content.find_all(['p', 'li', 'div', 'span']):
+                        text = elem.get_text().strip()
+                        if text and len(text) > 10:  # Filter out very short fragments
+                            text_parts.append(text)
+                
+                # If no main content found, try getting all paragraphs
+                if not text_parts:
+                    for p in soup.find_all('p'):
+                        text = p.get_text().strip()
+                        if text and len(text) > 20:
+                            text_parts.append(text)
+                
+                # Join and clean up text
+                full_text = "\n\n".join(text_parts)
+                
+                # Remove duplicate lines
+                lines = full_text.split('\n')
+                seen = set()
+                unique_lines = []
+                for line in lines:
+                    line_clean = line.strip()
+                    if line_clean and line_clean not in seen:
+                        seen.add(line_clean)
+                        unique_lines.append(line)
+                full_text = "\n".join(unique_lines)[:50000]  # Limit to 50KB
+                
+                # Extract keywords from text
+                keywords = []
+                keyword_patterns = [
+                    r'small business', r'cybersecurity', r'NIST', r'compliance',
+                    r'subcontract', r'flowdown', r'disclosure', r'payment',
+                    r'equal opportunity', r'Buy American', r'domestic', r'foreign',
+                    r'technical data', r'intellectual property', r'CUI', r'classified'
+                ]
+                for pattern in keyword_patterns:
+                    if re.search(pattern, full_text, re.IGNORECASE):
+                        keywords.append(pattern.replace(r'\s+', ' '))
+                
+                # Determine flowdown requirement (common indicators)
+                flowdown_required = bool(re.search(
+                    r'flow.?down|subcontract|lower.?tier|prime contractor shall',
+                    full_text, re.IGNORECASE
+                ))
+                
+                return {
+                    "clause_id": str(uuid.uuid4()),
+                    "number": clause_number,
+                    "title": title or f"Clause {clause_number}",
+                    "type": clause_type,
+                    "text": full_text or f"Content available at: {clause_url}",
+                    "summary": None,
+                    "flowdown_required": flowdown_required,
+                    "contract_types": [],
+                    "threshold_amount": None,
+                    "keywords": keywords[:10],
+                    "last_updated": datetime.now(timezone.utc).isoformat(),
+                    "source": "acquisition.gov",
+                    "source_url": clause_url
+                }
+            
+            # If direct URL fails, try the part page
+            logger.info(f"Direct URL failed for {clause_number}, trying part page")
+            
         return None
     except Exception as e:
         logger.error(f"Error fetching from acquisition.gov: {e}")
