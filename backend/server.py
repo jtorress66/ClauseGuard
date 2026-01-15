@@ -1700,7 +1700,7 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
                         clauses_str = full_record.get("clauses", full_record.get("contract_clauses", full_record.get("clause_list", "")))
                         clauses = [c.strip() for c in str(clauses_str).split(",") if c.strip()] if clauses_str else []
 
-                        contracts.append({
+                        contract_data = {
                             "id": contract_id,
                             "name": contract_title or f"Contract #{contract_id}",
                             "contract_title": contract_title,
@@ -1712,7 +1712,16 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
                             "status": status,
                             "contract_end_date": contract_end_date,
                             "date_created": date_created
-                        })
+                        }
+                        
+                        # Apply client-side text filter if needed
+                        if client_side_filter:
+                            # Search in title, company name, and type
+                            searchable_text = f"{contract_title} {company_name} {contract_type}".lower()
+                            if client_side_filter in searchable_text:
+                                contracts.append(contract_data)
+                        else:
+                            contracts.append(contract_data)
                         
                 except Exception as e:
                     logger.error(f"Error parsing Agiloft contracts: {e}")
