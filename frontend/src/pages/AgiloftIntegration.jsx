@@ -34,7 +34,7 @@ export default function AgiloftIntegration({ user }) {
     kb_url: "",
     username: "",
     password: "",
-    kb_name: "Default"
+    kb_name: ""
   });
   const [testing, setTesting] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState(null);
