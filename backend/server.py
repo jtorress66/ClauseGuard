@@ -1751,8 +1751,8 @@ async def update_agiloft_contract(update_request: AgiloftUpdateRequest, request:
             update_data["compliance_checked"] = datetime.now(timezone.utc).isoformat()
             update_data["compliance_checker"] = user.name
 
-            # Use lowercase "contract" per OpenAPI spec
-            update_url = f"{_norm_agiloft_base(config.kb_url)}/contract/{update_request.contract_id}"
+            # Use new URL builder for correct path format
+            update_url = _build_agiloft_url(config.kb_url, config.kb_name, f"contract/{update_request.contract_id}")
             update_response = await client.put(
                 update_url,
                 params={"lang": "en"},
