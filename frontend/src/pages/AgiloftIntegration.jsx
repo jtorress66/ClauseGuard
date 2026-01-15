@@ -464,23 +464,79 @@ export default function AgiloftIntegration({ user }) {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Contracts List */}
               <div className="bg-white rounded-xl border border-slate-200">
-                <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-                  <h3 className="font-heading font-bold text-lg text-navy-900">
-                    Agiloft Contracts
-                  </h3>
-                  <Button
-                    onClick={fetchAgiloftContracts}
-                    disabled={loadingContracts || !connectionStatus?.success}
-                    variant="outline"
-                    size="sm"
-                    data-testid="fetch-contracts-btn"
-                  >
-                    {loadingContracts ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="w-4 h-4" />
-                    )}
-                  </Button>
+                <div className="p-6 border-b border-slate-100">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-heading font-bold text-lg text-navy-900">
+                      Agiloft Contracts
+                    </h3>
+                    <Button
+                      onClick={fetchAgiloftContracts}
+                      disabled={loadingContracts || !connectionStatus?.success}
+                      variant="outline"
+                      size="sm"
+                      data-testid="fetch-contracts-btn"
+                    >
+                      {loadingContracts ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-4 h-4" />
+                      )}
+                    </Button>
+                  </div>
+                  
+                  {/* Search Filters */}
+                  <div className="space-y-3">
+                    <div>
+                      <Label htmlFor="contractSearch" className="text-xs">Search by Contract Title</Label>
+                      <Input
+                        id="contractSearch"
+                        placeholder="Search contracts..."
+                        value={contractSearch}
+                        onChange={(e) => setContractSearch(e.target.value)}
+                        className="h-9"
+                        data-testid="contract-search-input"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <Label htmlFor="contractTypeFilter" className="text-xs">Contract Type</Label>
+                        <Input
+                          id="contractTypeFilter"
+                          placeholder="e.g., Services Agreement"
+                          value={contractTypeFilter}
+                          onChange={(e) => setContractTypeFilter(e.target.value)}
+                          className="h-9"
+                          data-testid="contract-type-filter"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="contractIdFilter" className="text-xs">Contract ID</Label>
+                        <Input
+                          id="contractIdFilter"
+                          placeholder="e.g., 690"
+                          value={contractIdFilter}
+                          onChange={(e) => setContractIdFilter(e.target.value)}
+                          className="h-9"
+                          data-testid="contract-id-filter"
+                        />
+                      </div>
+                    </div>
+                    <Button
+                      onClick={searchContracts}
+                      disabled={loadingContracts || !connectionStatus?.success}
+                      variant="default"
+                      size="sm"
+                      className="w-full bg-teal-600 hover:bg-teal-700"
+                      data-testid="search-contracts-btn"
+                    >
+                      {loadingContracts ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Search className="w-4 h-4 mr-2" />
+                      )}
+                      Search Contracts
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="max-h-96 overflow-y-auto">
@@ -489,7 +545,7 @@ export default function AgiloftIntegration({ user }) {
                       <Database className="w-12 h-12 text-slate-300 mx-auto mb-4" />
                       <p className="text-slate-500">
                         {connectionStatus?.success 
-                          ? "Click refresh to load contracts from Agiloft"
+                          ? "Search for contracts in Agiloft"
                           : "Connect to Agiloft to view contracts"
                         }
                       </p>
@@ -502,102 +558,117 @@ export default function AgiloftIntegration({ user }) {
                           className={`p-4 cursor-pointer hover:bg-slate-50 transition-colors ${
                             selectedContract?.id === contract.id ? "bg-teal-50 border-l-4 border-teal-500" : ""
                           }`}
-                          onClick={() => analyzeContract(contract)}
+                          onClick={() => setSelectedContract(contract)}
                           data-testid={`contract-${contract.id}`}
                         >
                           <div className="flex items-start justify-between">
-                            <div>
-                              <p className="font-medium text-navy-900">{contract.name}</p>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium text-navy-900 truncate">
+                                {contract.contract_title || contract.name || `Contract #${contract.id}`}
+                              </p>
                               <p className="text-sm text-slate-500">
-                                {contract.type} • ${(contract.value || 0).toLocaleString()}
+                                ID: {contract.id} • {contract.contract_type || contract.type || "Unknown Type"}
                               </p>
-                              <p className="text-xs text-slate-400 mt-1">
-                                {contract.clauses?.length || 0} clauses
-                              </p>
+                              {contract.company_name && (
+                                <p className="text-xs text-slate-400">{contract.company_name}</p>
+                              )}
+                              {contract.status && (
+                                <p className="text-xs text-slate-400 mt-1">Status: {contract.status}</p>
+                              )}
                             </div>
-                            {contract.compliance_status && (
-                              <Badge className={
-                                contract.compliance_status === "compliant" 
-                                  ? "bg-green-100 text-green-700"
-                                  : contract.compliance_status === "warning"
-                                  ? "bg-amber-100 text-amber-700"
-                                  : "bg-red-100 text-red-700"
-                              }>
-                                {contract.compliance_status}
-                              </Badge>
-                            )}
+                            <Badge className={
+                              contract.status === "Active" || contract.status === "Executed"
+                                ? "bg-green-100 text-green-700"
+                                : contract.status === "Draft"
+                                ? "bg-slate-100 text-slate-700"
+                                : "bg-amber-100 text-amber-700"
+                            }>
+                              {contract.status || "N/A"}
+                            </Badge>
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
+                
+                {agiloftContracts.length > 0 && (
+                  <div className="p-4 border-t border-slate-100 text-sm text-slate-500">
+                    Showing {agiloftContracts.length} contracts
+                  </div>
+                )}
               </div>
 
-              {/* Analysis Results */}
+              {/* Contract Details & Analysis */}
               <div className="bg-white rounded-xl border border-slate-200">
                 <div className="p-6 border-b border-slate-100">
                   <h3 className="font-heading font-bold text-lg text-navy-900">
-                    Compliance Analysis
+                    {selectedContract ? "Contract Details & Analysis" : "Select a Contract"}
                   </h3>
                 </div>
 
                 <div className="p-6">
-                  {analyzingContract ? (
+                  {!selectedContract ? (
+                    <div className="text-center py-8">
+                      <FileText className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                      <p className="text-slate-500">Select a contract from the list to view details and analyze</p>
+                    </div>
+                  ) : analyzingContract ? (
                     <div className="text-center py-8">
                       <Loader2 className="w-8 h-8 animate-spin text-teal-600 mx-auto mb-4" />
                       <p className="text-slate-500">Analyzing contract...</p>
                     </div>
-                  ) : contractAnalysis ? (
+                  ) : (
                     <div className="space-y-6">
-                      {/* Summary */}
-                      <div>
-                        <h4 className="font-medium text-navy-900 mb-3">Contract: {selectedContract?.name}</h4>
-                        <div className="grid grid-cols-3 gap-4 mb-4">
-                          <div className="text-center p-3 bg-slate-50 rounded-lg">
-                            <div className="text-2xl font-bold text-teal-600">{contractAnalysis.correct_clauses?.length || 0}</div>
-                            <div className="text-xs text-slate-500">Correct</div>
+                      {/* Contract Info */}
+                      <div className="bg-slate-50 rounded-lg p-4">
+                        <h4 className="font-medium text-navy-900 mb-3">
+                          {selectedContract.contract_title || selectedContract.name}
+                        </h4>
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <span className="text-slate-500">ID:</span>{" "}
+                            <span className="font-medium">{selectedContract.id}</span>
                           </div>
-                          <div className="text-center p-3 bg-slate-50 rounded-lg">
-                            <div className="text-2xl font-bold text-amber-600">{contractAnalysis.missing_clauses?.length || 0}</div>
-                            <div className="text-xs text-slate-500">Missing</div>
+                          <div>
+                            <span className="text-slate-500">Type:</span>{" "}
+                            <span className="font-medium">{selectedContract.contract_type || selectedContract.type || "N/A"}</span>
                           </div>
-                          <div className="text-center p-3 bg-slate-50 rounded-lg">
-                            <div className="text-2xl font-bold text-red-600">{contractAnalysis.needs_update?.length || 0}</div>
-                            <div className="text-xs text-slate-500">Need Update</div>
+                          {selectedContract.company_name && (
+                            <div className="col-span-2">
+                              <span className="text-slate-500">Company:</span>{" "}
+                              <span className="font-medium">{selectedContract.company_name}</span>
+                            </div>
+                          )}
+                          <div>
+                            <span className="text-slate-500">Status:</span>{" "}
+                            <span className="font-medium">{selectedContract.status || "N/A"}</span>
                           </div>
+                          {selectedContract.value > 0 && (
+                            <div>
+                              <span className="text-slate-500">Value:</span>{" "}
+                              <span className="font-medium">${selectedContract.value.toLocaleString()}</span>
+                            </div>
+                          )}
                         </div>
+                        
+                        <Button
+                          onClick={() => analyzeContract(selectedContract)}
+                          disabled={analyzingContract}
+                          className="w-full mt-4 bg-teal-600 hover:bg-teal-700"
+                          data-testid="analyze-contract-btn"
+                        >
+                          {analyzingContract ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <Check className="w-4 h-4 mr-2" />
+                          )}
+                          Analyze for Compliance
+                        </Button>
                       </div>
 
-                      {/* Missing Clauses */}
-                      {contractAnalysis.missing_clauses?.length > 0 && (
-                        <div className="bg-amber-50 rounded-lg p-4 border border-amber-200">
-                          <div className="flex items-center gap-2 mb-2">
-                            <AlertTriangle className="w-5 h-5 text-amber-600" />
-                            <span className="font-medium text-amber-800">Missing Clauses</span>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {contractAnalysis.missing_clauses.map(clause => (
-                              <Badge key={clause} variant="outline" className="border-amber-300 text-amber-700">
-                                {clause}
-                              </Badge>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Flowdown Required */}
-                      {contractAnalysis.required_flowdown?.length > 0 && (
-                        <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-                          <div className="flex items-center gap-2 mb-2">
-                            <Download className="w-5 h-5 text-blue-600" />
-                            <span className="font-medium text-blue-800">Required Flowdown Clauses</span>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {contractAnalysis.required_flowdown.map(clause => (
-                              <Badge key={clause} variant="outline" className="border-blue-300 text-blue-700">
-                                {clause}
-                              </Badge>
+                      {/* Analysis Results */}
+                      {contractAnalysis && (
                             ))}
                           </div>
                         </div>
