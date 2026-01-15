@@ -1614,10 +1614,6 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
             # Add limit
             search_payload["$limit"] = contracts_request.limit
             
-            # Request all fields - use * to get all available fields
-            # Agiloft field names often differ from display names
-            search_payload["$fields"] = "*"
-            
             contracts_url = _build_agiloft_url(config.kb_url, config.kb_name, f"{contracts_request.table_name}/search")
             
             logger.info(f"Searching Agiloft contracts: {contracts_url}")
