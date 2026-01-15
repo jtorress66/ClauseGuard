@@ -734,48 +734,73 @@ export default function AgiloftIntegration({ user }) {
 
                       {/* Analysis Results */}
                       {contractAnalysis && (
-                            ))}
+                        <div className="space-y-4">
+                          {/* Summary Stats */}
+                          <div className="grid grid-cols-3 gap-3">
+                            <div className="text-center p-3 bg-green-50 rounded-lg">
+                              <div className="text-xl font-bold text-green-600">{contractAnalysis.correct_clauses?.length || 0}</div>
+                              <div className="text-xs text-slate-500">Correct</div>
+                            </div>
+                            <div className="text-center p-3 bg-amber-50 rounded-lg">
+                              <div className="text-xl font-bold text-amber-600">{contractAnalysis.missing_clauses?.length || 0}</div>
+                              <div className="text-xs text-slate-500">Missing</div>
+                            </div>
+                            <div className="text-center p-3 bg-red-50 rounded-lg">
+                              <div className="text-xl font-bold text-red-600">{contractAnalysis.needs_update?.length || 0}</div>
+                              <div className="text-xs text-slate-500">Need Update</div>
+                            </div>
                           </div>
+
+                          {/* Missing Clauses */}
+                          {contractAnalysis.missing_clauses?.length > 0 && (
+                            <div className="bg-amber-50 rounded-lg p-4 border border-amber-200">
+                              <div className="flex items-center gap-2 mb-2">
+                                <AlertTriangle className="w-5 h-5 text-amber-600" />
+                                <span className="font-medium text-amber-800">Missing Clauses</span>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {contractAnalysis.missing_clauses.map(clause => (
+                                  <Badge key={clause} variant="outline" className="border-amber-300 text-amber-700">
+                                    {clause}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Correct Clauses */}
+                          {contractAnalysis.correct_clauses?.length > 0 && (
+                            <div className="bg-green-50 rounded-lg p-4 border border-green-200">
+                              <div className="flex items-center gap-2 mb-2">
+                                <Check className="w-5 h-5 text-green-600" />
+                                <span className="font-medium text-green-800">Correct Clauses</span>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {contractAnalysis.correct_clauses.slice(0, 10).map(clause => (
+                                  <Badge key={clause} variant="outline" className="border-green-300 text-green-700">
+                                    {clause}
+                                  </Badge>
+                                ))}
+                                {contractAnalysis.correct_clauses.length > 10 && (
+                                  <Badge variant="outline">+{contractAnalysis.correct_clauses.length - 10} more</Badge>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Update Button */}
+                          {(contractAnalysis.missing_clauses?.length > 0 || contractAnalysis.needs_update?.length > 0) && (
+                            <Button
+                              onClick={updateAgiloftContract}
+                              className="w-full bg-teal-600 hover:bg-teal-700"
+                              data-testid="update-contract-btn"
+                            >
+                              <ArrowUpRight className="w-4 h-4 mr-2" />
+                              Update Contract in Agiloft
+                            </Button>
+                          )}
                         </div>
                       )}
-
-                      {/* Correct Clauses */}
-                      {contractAnalysis.correct_clauses?.length > 0 && (
-                        <div className="bg-green-50 rounded-lg p-4 border border-green-200">
-                          <div className="flex items-center gap-2 mb-2">
-                            <Check className="w-5 h-5 text-green-600" />
-                            <span className="font-medium text-green-800">Correct Clauses</span>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {contractAnalysis.correct_clauses.slice(0, 10).map(clause => (
-                              <Badge key={clause} variant="outline" className="border-green-300 text-green-700">
-                                {clause}
-                              </Badge>
-                            ))}
-                            {contractAnalysis.correct_clauses.length > 10 && (
-                              <Badge variant="outline">+{contractAnalysis.correct_clauses.length - 10} more</Badge>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Update Button */}
-                      <Button
-                        onClick={updateAgiloftContract}
-                        className="w-full bg-teal-600 hover:bg-teal-700"
-                        disabled={!contractAnalysis.missing_clauses?.length && !contractAnalysis.needs_update?.length}
-                        data-testid="update-contract-btn"
-                      >
-                        <ArrowUpRight className="w-4 h-4 mr-2" />
-                        Update Contract in Agiloft
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="text-center py-8">
-                      <FileText className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-                      <p className="text-slate-500">
-                        Select a contract to analyze for compliance
-                      </p>
                     </div>
                   )}
                 </div>
