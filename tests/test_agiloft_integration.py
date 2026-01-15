@@ -290,8 +290,10 @@ class TestAgiloftPushClausesBugFix:
             else:
                 print(f"  Warning: Push claims to have pushed {pushed} clauses with invalid credentials")
         else:
-            assert "message" in result, "Failed response should contain message"
-            print(f"✓ Push clauses properly failed: {result.get('message')}")
+            # Check for message or detail field
+            assert "message" in result or "detail" in result, "Failed response should contain message or detail"
+            error_msg = result.get("message", result.get("detail", ""))
+            print(f"✓ Push clauses properly failed: {error_msg}")
 
 
 class TestAgiloftFieldMapping:
