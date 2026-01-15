@@ -118,13 +118,14 @@ class TestAgiloftTestConnectionBugFix:
         response = authenticated_client.post(f"{BASE_URL}/api/agiloft/test-connection", json=data)
         
         # Should fail with connection error
+        # 520 is a Cloudflare error for unknown origin error (connection issues)
         if response.status_code == 200:
             result = response.json()
             assert result.get("success") is False, \
                 f"BUG: Unreachable server returned success:true! Response: {result}"
             print(f"✓ Unreachable server properly failed: {result.get('message')}")
         else:
-            assert response.status_code in [500, 502, 503, 504], \
+            assert response.status_code in [500, 502, 503, 504, 520], \
                 f"Expected connection error status, got {response.status_code}"
             print(f"✓ Unreachable server properly failed with status {response.status_code}")
     
