@@ -1591,19 +1591,24 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
             }
 
             # Build search query based on filters
-            # Agiloft search uses SQL-like syntax
+            # Agiloft search uses SQL-like syntax with internal field names
+            # Note: contract_title might not be searchable directly, but id is
             search_conditions = []
             
             if contracts_request.contract_id:
-                # Search by exact ID
+                # Search by exact ID - this works reliably
                 search_conditions.append(f"id = {contracts_request.contract_id}")
             
-            if contracts_request.search_query:
-                # Search by contract title (partial match)
-                search_conditions.append(f"contract_title LIKE '%{contracts_request.search_query}%'")
+            # Note: Text search on contract_title may not work directly in Agiloft
+            # The title is stored in a related table (DAOcontract_to_contract)
+            # For now, we'll fetch all and filter on our side for text searches
             
-            if contracts_request.contract_type:
-                # Filter by contract type
+            client_side_filter = None
+            if contracts_request.search_query and not contracts_request.contract_id:
+                client_side_filter = contracts_request.search_query.lower()
+            
+            if contracts_request.contract_type and not contracts_request.contract_id:
+                # Try to filter by contract type
                 search_conditions.append(f"contract_type LIKE '%{contracts_request.contract_type}%'")
             
             # Build the search payload
