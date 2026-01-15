@@ -160,18 +160,19 @@ export default function AgiloftIntegration({ user }) {
     }
 
     setLoadingContracts(true);
+    setSelectedContract(null);
+    setContractAnalysis(null);
 
     try {
       const response = await fetch(`${API}/agiloft/contracts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ config })
+        body: JSON.stringify({ config, limit: 50 })
       });
 
       const result = await response.json();
       
-      // Handle HTTP errors
       if (!response.ok) {
         const errorMessage = result.detail || result.message || `HTTP Error ${response.status}`;
         toast.error(errorMessage);
@@ -190,6 +191,65 @@ export default function AgiloftIntegration({ user }) {
       }
     } catch (error) {
       toast.error(`Failed to load contracts: ${error.message}`);
+    } finally {
+      setLoadingContracts(false);
+    }
+  };
+
+  const searchContracts = async () => {
+    if (!connectionStatus?.success) {
+      toast.error("Please test connection first");
+      return;
+    }
+
+    setLoadingContracts(true);
+    setSelectedContract(null);
+    setContractAnalysis(null);
+
+    try {
+      const searchParams = {
+        config,
+        limit: 50
+      };
+      
+      // Add search filters
+      if (contractSearch.trim()) {
+        searchParams.search_query = contractSearch.trim();
+      }
+      if (contractTypeFilter.trim()) {
+        searchParams.contract_type = contractTypeFilter.trim();
+      }
+      if (contractIdFilter.trim()) {
+        searchParams.contract_id = contractIdFilter.trim();
+      }
+
+      const response = await fetch(`${API}/agiloft/contracts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(searchParams)
+      });
+
+      const result = await response.json();
+      
+      if (!response.ok) {
+        const errorMessage = result.detail || result.message || `HTTP Error ${response.status}`;
+        toast.error(errorMessage);
+        return;
+      }
+      
+      if (result.success) {
+        setAgiloftContracts(result.contracts || []);
+        if (result.contracts?.length > 0) {
+          toast.success(`Found ${result.contracts.length} contracts`);
+        } else {
+          toast.info("No contracts match your search criteria");
+        }
+      } else {
+        toast.error(result.message || "Search failed");
+      }
+    } catch (error) {
+      toast.error(`Search failed: ${error.message}`);
     } finally {
       setLoadingContracts(false);
     }
