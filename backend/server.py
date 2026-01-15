@@ -1651,18 +1651,37 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
 
                     for record in records:
                         # Map Agiloft fields to our contract model
-                        # Based on user's Agiloft screenshot:
-                        # ID, Contract Title, Contract Type, Company Name, Status, Contract End Date
+                        # Agiloft stores data in nested DAO objects
                         
                         contract_id = str(record.get("id", record.get("$id", "")))
-                        contract_title = record.get("contract_title", record.get("title", record.get("name", "")))
-                        contract_type = record.get("contract_type", record.get("type", ""))
-                        company_name = record.get("company_name", record.get("company", ""))
-                        status = record.get("status", record.get("wfstate", ""))
+                        
+                        # Contract Title - check nested DAO first, then top-level
+                        contract_title = ""
+                        if isinstance(record.get("DAOcontract_to_contract"), dict):
+                            contract_title = record["DAOcontract_to_contract"].get("root_contract_title", "")
+                        if not contract_title:
+                            contract_title = record.get("contract_title", record.get("title", record.get("name", "")))
+                        
+                        # Contract Type - check multiple sources
+                        contract_type = record.get("contract_type", "")
+                        if not contract_type and isinstance(record.get("DAOcontract_to_contract_type"), dict):
+                            contract_type = record["DAOcontract_to_contract_type"].get("contract_type", "")
+                        
+                        # Company Name from DAO
+                        company_name = ""
+                        if isinstance(record.get("DAOcontract_to_company"), dict):
+                            company_name = record["DAOcontract_to_company"].get("company_name", "")
+                        if not company_name:
+                            company_name = record.get("company_name", record.get("company", ""))
+                        
+                        # Status - wfstate is the workflow state
+                        status = record.get("wfstate", record.get("status", ""))
+                        
+                        # Dates
                         contract_end_date = record.get("contract_end_date", record.get("end_date", ""))
                         date_created = record.get("date_created", record.get("created", ""))
                         
-                        # Get contract value if available
+                        # Contract value
                         contract_value = record.get("contract_value", record.get("value", record.get("amount", 0)))
                         try:
                             contract_value = float(contract_value) if contract_value else 0
@@ -1684,8 +1703,7 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
                             "clauses": clauses,
                             "status": status,
                             "contract_end_date": contract_end_date,
-                            "date_created": date_created,
-                            "raw_data": record  # Include raw data for debugging
+                            "date_created": date_created
                         })
                         
                 except Exception as e:
