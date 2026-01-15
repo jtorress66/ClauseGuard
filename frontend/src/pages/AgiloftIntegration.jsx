@@ -56,8 +56,8 @@ export default function AgiloftIntegration({ user }) {
   };
 
   const testConnection = async () => {
-    if (!config.kb_url || !config.username || !config.password) {
-      toast.error("Please fill in all required fields");
+    if (!config.kb_url || !config.username || !config.password || !config.kb_name) {
+      toast.error("Please fill in all required fields including KB Name");
       return;
     }
 
@@ -73,6 +73,15 @@ export default function AgiloftIntegration({ user }) {
       });
 
       const result = await response.json();
+      
+      // Handle HTTP error status codes (like 401, 503, etc.)
+      if (!response.ok) {
+        const errorMessage = result.detail || result.message || `HTTP Error ${response.status}`;
+        setConnectionStatus({ success: false, message: errorMessage });
+        toast.error(errorMessage);
+        return;
+      }
+      
       setConnectionStatus(result);
       
       if (result.success) {
@@ -81,8 +90,8 @@ export default function AgiloftIntegration({ user }) {
         toast.error(result.message || "Connection failed");
       }
     } catch (error) {
-      setConnectionStatus({ success: false, message: error.message });
-      toast.error("Connection test failed");
+      setConnectionStatus({ success: false, message: `Network error: ${error.message}` });
+      toast.error("Connection test failed - check your network");
     } finally {
       setTesting(false);
     }
