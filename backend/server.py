@@ -1614,6 +1614,10 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
             # Add limit
             search_payload["$limit"] = contracts_request.limit
             
+            # Request specific fields that we need
+            # Based on Agiloft contract table structure
+            search_payload["$select"] = "id,contract_title,contract_type,company_name,status,contract_end_date,date_created,contract_value"
+            
             contracts_url = _build_agiloft_url(config.kb_url, config.kb_name, f"{contracts_request.table_name}/search")
             
             logger.info(f"Searching Agiloft contracts: {contracts_url}")
