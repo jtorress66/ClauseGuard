@@ -93,7 +93,8 @@ class TestAgiloftTestConnectionBugFix:
             print(f"✓ Connection properly failed with message: {result.get('message', result.get('error'))}")
         else:
             # Non-200 status codes are acceptable for failed connections
-            assert response.status_code in [401, 403, 500, 502, 503, 504], \
+            # 520 is a Cloudflare error for unknown origin error (connection issues)
+            assert response.status_code in [401, 403, 500, 502, 503, 504, 520], \
                 f"Unexpected status code: {response.status_code}"
             
             # Verify error message is present
