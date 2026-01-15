@@ -1716,6 +1716,64 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
         logger.error(f"Agiloft contracts error: {e}")
         return {"success": False, "message": str(e)}
 
+class AgiloftGetContractRequest(BaseModel):
+    """Request to get a single contract by ID"""
+    config: AgiloftConfig
+    contract_id: str
+
+@agiloft_router.post("/contract/{contract_id}")
+async def get_agiloft_contract(contract_id: str, get_request: AgiloftGetContractRequest, request: Request):
+    """Get a single contract with all fields from Agiloft"""
+    user = await require_auth(request)
+    
+    config = get_request.config
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            login_data = await agiloft_login(client, config)
+            token = login_data.get("access_token")
+            
+            if not token:
+                raise HTTPException(status_code=401, detail="Authentication failed")
+            
+            auth_headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}"
+            }
+            
+            # Get single contract by ID
+            contract_url = _build_agiloft_url(config.kb_url, config.kb_name, f"contract/{contract_id}")
+            
+            logger.info(f"Fetching contract: {contract_url}")
+            
+            response = await client.get(
+                contract_url,
+                params={"lang": "en"},
+                headers=auth_headers
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                record = data.get("result", data) if isinstance(data, dict) else data
+                
+                logger.info(f"Contract {contract_id} fields: {list(record.keys()) if isinstance(record, dict) else 'not a dict'}")
+                
+                return {
+                    "success": True,
+                    "contract": record,
+                    "available_fields": list(record.keys()) if isinstance(record, dict) else []
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": f"Failed to fetch contract: HTTP {response.status_code}",
+                    "raw_response": response.text[:500]
+                }
+                
+    except Exception as e:
+        logger.error(f"Error fetching contract: {e}")
+        return {"success": False, "message": str(e)}
+
 class AgiloftAnalyzeRequest(BaseModel):
     """Request to analyze an Agiloft contract"""
     config: AgiloftConfig
