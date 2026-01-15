@@ -1585,8 +1585,8 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
                 "Authorization": f"Bearer {token}"
             }
 
-            # Use /contract/search endpoint to get contracts
-            contracts_url = f"{_norm_agiloft_base(config.kb_url)}/{contracts_request.table_name}/search"
+            # Use /{table}/search endpoint to get contracts
+            contracts_url = _build_agiloft_url(config.kb_url, config.kb_name, f"{contracts_request.table_name}/search")
             
             # Empty search to get all contracts (or you could add filters)
             search_payload = {}
