@@ -1556,16 +1556,22 @@ async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Req
         return {"success": False, "message": f"Push failed: {str(e)}"}
 
 class AgiloftContractsRequest(BaseModel):
-    """Request to fetch Agiloft contracts"""
+    """Request to fetch/search Agiloft contracts"""
     config: AgiloftConfig
     table_name: str = "contract"  # Agiloft table name - lowercase per OpenAPI spec
+    search_query: Optional[str] = None  # Search term for contract title
+    contract_type: Optional[str] = None  # Filter by contract type
+    contract_id: Optional[str] = None  # Search by specific contract ID
+    limit: int = 50  # Max results to return
 
 @agiloft_router.post("/contracts")
 async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, request: Request):
-    """Fetch contracts from Agiloft for analysis
+    """Fetch and search contracts from Agiloft
     
-    Uses the /contract endpoint per OpenAPI spec.
-    Properly propagates authentication errors instead of silently falling back to demo data.
+    Supports searching by:
+    - Contract Title (partial match)
+    - Contract Type (exact match)
+    - Contract ID (exact match)
     """
     user = await require_auth(request)
 
@@ -1573,7 +1579,6 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # Login - errors will propagate properly now
             login_data = await agiloft_login(client, config)
             
             token = login_data.get("access_token")
@@ -1585,11 +1590,34 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
                 "Authorization": f"Bearer {token}"
             }
 
-            # Use /{table}/search endpoint to get contracts
+            # Build search query based on filters
+            # Agiloft search uses SQL-like syntax
+            search_conditions = []
+            
+            if contracts_request.contract_id:
+                # Search by exact ID
+                search_conditions.append(f"id = {contracts_request.contract_id}")
+            
+            if contracts_request.search_query:
+                # Search by contract title (partial match)
+                search_conditions.append(f"contract_title LIKE '%{contracts_request.search_query}%'")
+            
+            if contracts_request.contract_type:
+                # Filter by contract type
+                search_conditions.append(f"contract_type LIKE '%{contracts_request.contract_type}%'")
+            
+            # Build the search payload
+            search_payload = {}
+            if search_conditions:
+                search_payload["query"] = " AND ".join(search_conditions)
+            
+            # Add limit
+            search_payload["$limit"] = contracts_request.limit
+            
             contracts_url = _build_agiloft_url(config.kb_url, config.kb_name, f"{contracts_request.table_name}/search")
             
-            # Empty search to get all contracts (or you could add filters)
-            search_payload = {}
+            logger.info(f"Searching Agiloft contracts: {contracts_url}")
+            logger.info(f"Search payload: {search_payload}")
             
             search_response = await client.post(
                 contracts_url,
@@ -1597,46 +1625,87 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
                 json=search_payload,
                 headers=auth_headers
             )
+            
+            logger.info(f"Agiloft contracts response status: {search_response.status_code}")
+            logger.info(f"Agiloft contracts response: {search_response.text[:1000]}")
 
             contracts = []
 
             if search_response.status_code == 200:
                 try:
                     data = search_response.json()
-                    records = data if isinstance(data, list) else data.get("records", data.get("result", []))
+                    
+                    # Handle different response formats
+                    if isinstance(data, list):
+                        records = data
+                    elif isinstance(data.get("result"), list):
+                        records = data["result"]
+                    else:
+                        records = data.get("records", data.get("result", []))
+                    
+                    logger.info(f"Found {len(records) if records else 0} contract records")
 
                     for record in records:
-                        # Parse clauses from various possible field names
+                        # Map Agiloft fields to our contract model
+                        # Based on user's Agiloft screenshot:
+                        # ID, Contract Title, Contract Type, Company Name, Status, Contract End Date
+                        
+                        contract_id = str(record.get("id", record.get("$id", "")))
+                        contract_title = record.get("contract_title", record.get("title", record.get("name", "")))
+                        contract_type = record.get("contract_type", record.get("type", ""))
+                        company_name = record.get("company_name", record.get("company", ""))
+                        status = record.get("status", record.get("wfstate", ""))
+                        contract_end_date = record.get("contract_end_date", record.get("end_date", ""))
+                        date_created = record.get("date_created", record.get("created", ""))
+                        
+                        # Get contract value if available
+                        contract_value = record.get("contract_value", record.get("value", record.get("amount", 0)))
+                        try:
+                            contract_value = float(contract_value) if contract_value else 0
+                        except:
+                            contract_value = 0
+                        
+                        # Get clauses if available
                         clauses_str = record.get("clauses", record.get("contract_clauses", record.get("clause_list", "")))
                         clauses = [c.strip() for c in str(clauses_str).split(",") if c.strip()] if clauses_str else []
 
                         contracts.append({
-                            "id": str(record.get("id", record.get("$id", uuid.uuid4()))),
-                            "name": record.get("name", record.get("contract_name", record.get("title", "Unnamed Contract"))),
-                            "type": record.get("contract_type", record.get("type", "Fixed-Price")),
-                            "value": float(record.get("contract_value", record.get("value", record.get("amount", 0))) or 0),
+                            "id": contract_id,
+                            "name": contract_title or f"Contract #{contract_id}",
+                            "contract_title": contract_title,
+                            "type": contract_type,
+                            "contract_type": contract_type,
+                            "company_name": company_name,
+                            "value": contract_value,
                             "clauses": clauses,
-                            "status": record.get("status", record.get("wfstate", "Active"))
+                            "status": status,
+                            "contract_end_date": contract_end_date,
+                            "date_created": date_created,
+                            "raw_data": record  # Include raw data for debugging
                         })
+                        
                 except Exception as e:
                     logger.error(f"Error parsing Agiloft contracts: {e}")
                     return {
                         "success": False,
                         "message": f"Failed to parse contract data: {str(e)}",
-                        "contracts": []
+                        "contracts": [],
+                        "raw_response": search_response.text[:500]
                     }
             else:
                 logger.error(f"Agiloft contracts search failed: {search_response.status_code}")
                 return {
                     "success": False,
                     "message": f"Failed to fetch contracts: HTTP {search_response.status_code}",
-                    "contracts": []
+                    "contracts": [],
+                    "raw_response": search_response.text[:500]
                 }
 
             return {
                 "success": True,
                 "contracts": contracts,
-                "total": len(contracts)
+                "total": len(contracts),
+                "search_applied": bool(search_conditions)
             }
 
     except Exception as e:
