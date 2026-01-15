@@ -72,7 +72,21 @@ export default function AgiloftIntegration({ user }) {
         body: JSON.stringify(config)
       });
 
-      const result = await response.json();
+      // Clone the response before reading to prevent "body stream already read" error
+      const responseClone = response.clone();
+      
+      let result;
+      try {
+        result = await response.json();
+      } catch (parseError) {
+        // If JSON parsing fails, try to get text
+        const text = await responseClone.text();
+        result = { 
+          success: false, 
+          message: text || `HTTP Error ${response.status}`,
+          detail: text
+        };
+      }
       
       // Handle HTTP error status codes (like 401, 503, etc.)
       if (!response.ok) {
@@ -90,8 +104,9 @@ export default function AgiloftIntegration({ user }) {
         toast.error(result.message || "Connection failed");
       }
     } catch (error) {
-      setConnectionStatus({ success: false, message: `Network error: ${error.message}` });
-      toast.error("Connection test failed - check your network");
+      console.error("Agiloft connection error:", error);
+      setConnectionStatus({ success: false, message: `Connection error: ${error.message}` });
+      toast.error(`Connection test failed: ${error.message}`);
     } finally {
       setTesting(false);
     }
