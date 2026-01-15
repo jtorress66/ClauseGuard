@@ -1645,47 +1645,54 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
                     
                     logger.info(f"Found {len(records) if records else 0} contract records")
 
-                    for record in records:
-                        # Map Agiloft fields to our contract model
-                        # Agiloft stores data in nested DAO objects
-                        
+                    # The search endpoint returns limited data, we need to fetch each contract's details
+                    contracts = []
+                    
+                    for record in records[:contracts_request.limit]:  # Limit how many we fetch in detail
                         contract_id = str(record.get("id", record.get("$id", "")))
                         
-                        # Contract Title - check nested DAO first, then top-level
+                        # Fetch full contract details
+                        detail_url = _build_agiloft_url(config.kb_url, config.kb_name, f"contract/{contract_id}")
+                        detail_response = await client.get(
+                            detail_url,
+                            params={"lang": "en"},
+                            headers=auth_headers
+                        )
+                        
+                        if detail_response.status_code == 200:
+                            detail_data = detail_response.json()
+                            full_record = detail_data.get("result", detail_data) if isinstance(detail_data, dict) else detail_data
+                        else:
+                            full_record = record  # Fall back to search data
+                        
+                        # Extract data from nested DAO objects
                         contract_title = ""
-                        if isinstance(record.get("DAOcontract_to_contract"), dict):
-                            contract_title = record["DAOcontract_to_contract"].get("root_contract_title", "")
+                        if isinstance(full_record.get("DAOcontract_to_contract"), dict):
+                            contract_title = full_record["DAOcontract_to_contract"].get("root_contract_title", "")
                         if not contract_title:
-                            contract_title = record.get("contract_title", record.get("title", record.get("name", "")))
+                            contract_title = full_record.get("contract_title", full_record.get("title", full_record.get("name", "")))
                         
-                        # Contract Type - check multiple sources
-                        contract_type = record.get("contract_type", "")
-                        if not contract_type and isinstance(record.get("DAOcontract_to_contract_type"), dict):
-                            contract_type = record["DAOcontract_to_contract_type"].get("contract_type", "")
+                        contract_type = full_record.get("contract_type", "")
+                        if not contract_type and isinstance(full_record.get("DAOcontract_to_contract_type"), dict):
+                            contract_type = full_record["DAOcontract_to_contract_type"].get("contract_type", "")
                         
-                        # Company Name from DAO
                         company_name = ""
-                        if isinstance(record.get("DAOcontract_to_company"), dict):
-                            company_name = record["DAOcontract_to_company"].get("company_name", "")
+                        if isinstance(full_record.get("DAOcontract_to_company"), dict):
+                            company_name = full_record["DAOcontract_to_company"].get("company_name", "")
                         if not company_name:
-                            company_name = record.get("company_name", record.get("company", ""))
+                            company_name = full_record.get("company_name", full_record.get("company", ""))
                         
-                        # Status - wfstate is the workflow state
-                        status = record.get("wfstate", record.get("status", ""))
+                        status = full_record.get("wfstate", full_record.get("status", ""))
+                        contract_end_date = full_record.get("contract_end_date", full_record.get("end_date", ""))
+                        date_created = full_record.get("date_created", full_record.get("created", ""))
                         
-                        # Dates
-                        contract_end_date = record.get("contract_end_date", record.get("end_date", ""))
-                        date_created = record.get("date_created", record.get("created", ""))
-                        
-                        # Contract value
-                        contract_value = record.get("contract_value", record.get("value", record.get("amount", 0)))
+                        contract_value = full_record.get("contract_value", full_record.get("value", full_record.get("amount", 0)))
                         try:
                             contract_value = float(contract_value) if contract_value else 0
                         except:
                             contract_value = 0
                         
-                        # Get clauses if available
-                        clauses_str = record.get("clauses", record.get("contract_clauses", record.get("clause_list", "")))
+                        clauses_str = full_record.get("clauses", full_record.get("contract_clauses", full_record.get("clause_list", "")))
                         clauses = [c.strip() for c in str(clauses_str).split(",") if c.strip()] if clauses_str else []
 
                         contracts.append({
