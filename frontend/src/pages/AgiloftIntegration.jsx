@@ -151,14 +151,25 @@ export default function AgiloftIntegration({ user }) {
 
       const result = await response.json();
       
+      // Handle HTTP errors
+      if (!response.ok) {
+        const errorMessage = result.detail || result.message || `HTTP Error ${response.status}`;
+        toast.error(errorMessage);
+        return;
+      }
+      
       if (result.success) {
         setAgiloftContracts(result.contracts || []);
-        toast.success(`Loaded ${result.contracts?.length || 0} contracts from Agiloft`);
+        if (result.contracts?.length > 0) {
+          toast.success(`Loaded ${result.contracts.length} contracts from Agiloft`);
+        } else {
+          toast.info("No contracts found in Agiloft");
+        }
       } else {
         toast.error(result.message || "Failed to load contracts");
       }
     } catch (error) {
-      toast.error("Failed to load contracts");
+      toast.error(`Failed to load contracts: ${error.message}`);
     } finally {
       setLoadingContracts(false);
     }
