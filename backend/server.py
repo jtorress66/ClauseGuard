@@ -1399,7 +1399,11 @@ class AgiloftPushRequest(BaseModel):
 
 @agiloft_router.post("/push-clauses")
 async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Request):
-    """Push clauses from our database to Agiloft knowledge base"""
+    """Push clauses from our database to Agiloft knowledge base
+    
+    Uses the /clause endpoint (singular, lowercase) per OpenAPI spec.
+    Field mapping based on AL_Clause_Library_Request schema.
+    """
     user = await require_auth(request)
 
     config = push_request.config
@@ -1421,37 +1425,49 @@ async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Req
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             login_data = await agiloft_login(client, config)
-            token = login_data.get("access_token") or login_data.get("token") or login_data.get("auth_token") or ""
+            token = login_data.get("access_token")
+            
+            if not token:
+                return {"success": False, "message": "Authentication failed - no token received"}
 
-            auth_headers = {"Content-Type": "application/json"}
-            if token:
-                auth_headers["Authorization"] = f"Bearer {token}"
+            auth_headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}"
+            }
 
             created_count = 0
             updated_count = 0
+            errors_list = []
+            
+            # Table name is "clause" (lowercase, singular) per OpenAPI spec
+            clause_table = "clause"
 
             for clause in clauses_to_push:
-                clause_data = {
-                    "clause_number": clause.get("number", ""),
-                    "clause_title": clause.get("title", ""),
-                    "clause_type": clause.get("type", "FAR"),
-                    "clause_text": clause.get("text", "")[:32000],
-                    "clause_summary": clause.get("summary", ""),
-                    "flowdown_required": "Yes" if clause.get("flowdown_required") else "No",
-                    "threshold_amount": str(clause.get("threshold_amount", 0) or 0),
-                    "keywords": ", ".join(clause.get("keywords", [])),
-                    "source_url": clause.get("source_url", ""),
-                    "last_updated": datetime.now(timezone.utc).isoformat()
+                # Map our fields to Agiloft's field names per AL_Clause_Library_Request schema
+                agiloft_data = {
+                    "clause_title": f"{clause.get('number', '')} - {clause.get('title', '')}",
+                    "clause_text": clause.get("text", "")[:32000],  # Agiloft may have text limits
+                    "guidance": clause.get("summary", ""),
+                    "boilerplate": "Yes" if clause.get("flowdown_required") else "No",
+                    "condition": ", ".join(clause.get("keywords", [])),
                 }
+                
+                # Add clause_type if it maps to an Agiloft type ID (you may need to configure this)
+                clause_type = clause.get("type", "FAR")
+                if clause_type:
+                    agiloft_data["clause_usage"] = clause_type  # FAR or DFARS
 
                 try:
-                    search_url = f"{_norm_agiloft_base(config.kb_url)}/Clauses"
-                    search_response = await client.get(
+                    # First, search if clause already exists using /clause/search endpoint
+                    search_url = f"{_norm_agiloft_base(config.kb_url)}/{clause_table}/search"
+                    search_payload = {
+                        "query": f"clause_title LIKE '%{clause.get('number', '')}%'"
+                    }
+                    
+                    search_response = await client.post(
                         search_url,
-                        params={
-                            "lang": "en",
-                            "$filter": f"clause_number eq '{clause.get('number', '')}'"
-                        },
+                        params={"lang": "en"},
+                        json=search_payload,
                         headers=auth_headers
                     )
 
@@ -1459,55 +1475,63 @@ async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Req
                     if search_response.status_code == 200:
                         try:
                             search_data = search_response.json()
-                            existing_records = search_data if isinstance(search_data, list) else search_data.get("records", [])
-                        except:
-                            pass
+                            # Response could be a list or have a records/result field
+                            if isinstance(search_data, list):
+                                existing_records = search_data
+                            else:
+                                existing_records = search_data.get("records", search_data.get("result", []))
+                        except Exception as e:
+                            logger.warning(f"Failed to parse search response: {e}")
 
-                    if existing_records:
+                    if existing_records and len(existing_records) > 0:
+                        # Update existing record using PUT /clause/{id}
                         record_id = existing_records[0].get("id", existing_records[0].get("$id"))
-                        update_url = f"{_norm_agiloft_base(config.kb_url)}/Clauses/{record_id}"
-                        await client.put(
-                            update_url,
-                            params={"lang": "en"},
-                            json=clause_data,
-                            headers=auth_headers
-                        )
-                        updated_count += 1
+                        if record_id:
+                            update_url = f"{_norm_agiloft_base(config.kb_url)}/{clause_table}/{record_id}"
+                            update_response = await client.put(
+                                update_url,
+                                params={"lang": "en"},
+                                json=agiloft_data,
+                                headers=auth_headers
+                            )
+                            if update_response.status_code == 200:
+                                updated_count += 1
+                            else:
+                                errors_list.append(f"Failed to update {clause.get('number')}: {update_response.status_code}")
                     else:
-                        create_url = f"{_norm_agiloft_base(config.kb_url)}/Clauses"
-                        await client.post(
+                        # Create new record using POST /clause
+                        create_url = f"{_norm_agiloft_base(config.kb_url)}/{clause_table}"
+                        create_response = await client.post(
                             create_url,
                             params={"lang": "en"},
-                            json=clause_data,
+                            json=agiloft_data,
                             headers=auth_headers
                         )
-                        created_count += 1
+                        if create_response.status_code in [200, 201]:
+                            created_count += 1
+                        else:
+                            errors_list.append(f"Failed to create {clause.get('number')}: {create_response.status_code}")
 
                 except Exception as e:
                     logger.error(f"Error pushing clause {clause.get('number')}: {e}")
-                    # Try create anyway (keeps your existing behavior)
-                    try:
-                        create_url = f"{_norm_agiloft_base(config.kb_url)}/Clauses"
-                        await client.post(
-                            create_url,
-                            params={"lang": "en"},
-                            json=clause_data,
-                            headers=auth_headers
-                        )
-                        created_count += 1
-                    except:
-                        pass
+                    errors_list.append(f"Error with {clause.get('number')}: {str(e)}")
 
-            return {
+            result = {
                 "success": True,
                 "message": f"Pushed {created_count + updated_count} clauses to Agiloft",
                 "pushed_count": created_count + updated_count,
                 "created_count": created_count,
                 "updated_count": updated_count
             }
+            
+            if errors_list:
+                result["errors"] = errors_list[:10]  # Limit error list
+                result["total_errors"] = len(errors_list)
+            
+            return result
 
     except HTTPException as e:
-        return {"success": False, "message": str(e.detail)}
+        raise
     except Exception as e:
         logger.error(f"Agiloft push error: {e}")
         return {"success": False, "message": f"Push failed: {str(e)}"}
