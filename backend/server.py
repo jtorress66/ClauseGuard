@@ -1539,61 +1539,43 @@ async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Req
 class AgiloftContractsRequest(BaseModel):
     """Request to fetch Agiloft contracts"""
     config: AgiloftConfig
-    table_name: str = "Contracts"
+    table_name: str = "contract"  # Agiloft table name - lowercase per OpenAPI spec
 
 @agiloft_router.post("/contracts")
 async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, request: Request):
-    """Fetch contracts from Agiloft for analysis"""
+    """Fetch contracts from Agiloft for analysis
+    
+    Uses the /contract endpoint per OpenAPI spec.
+    Properly propagates authentication errors instead of silently falling back to demo data.
+    """
     user = await require_auth(request)
 
     config = contracts_request.config
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            try:
-                login_data = await agiloft_login(client, config)
-            except HTTPException:
-                logger.info("Agiloft login failed, returning demo contracts")
-                return {
-                    "success": True,
-                    "contracts": [
-                        {
-                            "id": "demo-1",
-                            "name": "Defense Logistics Contract",
-                            "type": "Fixed-Price",
-                            "value": 2500000,
-                            "clauses": ["52.212-4", "52.219-8", "252.204-7012"],
-                            "status": "Active"
-                        },
-                        {
-                            "id": "demo-2",
-                            "name": "IT Services Agreement",
-                            "type": "Time-and-Materials",
-                            "value": 750000,
-                            "clauses": ["52.212-4", "52.222-26"],
-                            "status": "Active"
-                        },
-                        {
-                            "id": "demo-3",
-                            "name": "Research & Development Contract",
-                            "type": "Cost-Reimbursement",
-                            "value": 5000000,
-                            "clauses": ["52.212-4", "252.227-7013"],
-                            "status": "Active"
-                        }
-                    ],
-                    "note": "Using demo data - Agiloft connection not established"
-                }
+            # Login - errors will propagate properly now
+            login_data = await agiloft_login(client, config)
+            
+            token = login_data.get("access_token")
+            if not token:
+                raise HTTPException(status_code=401, detail="Authentication failed - no token received")
+            
+            auth_headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}"
+            }
 
-            token = login_data.get("access_token") or login_data.get("token") or login_data.get("auth_token") or ""
-            auth_headers = {"Content-Type": "application/json"}
-            if token:
-                auth_headers["Authorization"] = f"Bearer {token}"
-
-            contracts_url = f"{_norm_agiloft_base(config.kb_url)}/{contracts_request.table_name}"
-            search_response = await client.get(
+            # Use /contract/search endpoint to get contracts
+            contracts_url = f"{_norm_agiloft_base(config.kb_url)}/{contracts_request.table_name}/search"
+            
+            # Empty search to get all contracts (or you could add filters)
+            search_payload = {}
+            
+            search_response = await client.post(
                 contracts_url,
                 params={"lang": "en"},
+                json=search_payload,
                 headers=auth_headers
             )
 
@@ -1605,49 +1587,38 @@ async def get_agiloft_contracts(contracts_request: AgiloftContractsRequest, requ
                     records = data if isinstance(data, list) else data.get("records", data.get("result", []))
 
                     for record in records:
-                        clauses_str = record.get("clauses", record.get("contract_clauses", ""))
-                        clauses = [c.strip() for c in clauses_str.split(",") if c.strip()] if clauses_str else []
+                        # Parse clauses from various possible field names
+                        clauses_str = record.get("clauses", record.get("contract_clauses", record.get("clause_list", "")))
+                        clauses = [c.strip() for c in str(clauses_str).split(",") if c.strip()] if clauses_str else []
 
                         contracts.append({
                             "id": str(record.get("id", record.get("$id", uuid.uuid4()))),
-                            "name": record.get("name", record.get("contract_name", "Unnamed Contract")),
+                            "name": record.get("name", record.get("contract_name", record.get("title", "Unnamed Contract"))),
                             "type": record.get("contract_type", record.get("type", "Fixed-Price")),
-                            "value": float(record.get("contract_value", record.get("value", 0)) or 0),
+                            "value": float(record.get("contract_value", record.get("value", record.get("amount", 0))) or 0),
                             "clauses": clauses,
-                            "status": record.get("status", "Active")
+                            "status": record.get("status", record.get("wfstate", "Active"))
                         })
                 except Exception as e:
                     logger.error(f"Error parsing Agiloft contracts: {e}")
-
-            if not contracts:
-                contracts = [
-                    {
-                        "id": "demo-1",
-                        "name": "Defense Logistics Contract",
-                        "type": "Fixed-Price",
-                        "value": 2500000,
-                        "clauses": ["52.212-4", "52.219-8", "252.204-7012"],
-                        "status": "Active"
-                    },
-                    {
-                        "id": "demo-2",
-                        "name": "IT Services Agreement",
-                        "type": "Time-and-Materials",
-                        "value": 750000,
-                        "clauses": ["52.212-4", "52.222-26"],
-                        "status": "Active"
-                    },
-                    {
-                        "id": "demo-3",
-                        "name": "Research & Development Contract",
-                        "type": "Cost-Reimbursement",
-                        "value": 5000000,
-                        "clauses": ["52.212-4", "252.227-7013"],
-                        "status": "Active"
+                    return {
+                        "success": False,
+                        "message": f"Failed to parse contract data: {str(e)}",
+                        "contracts": []
                     }
-                ]
+            else:
+                logger.error(f"Agiloft contracts search failed: {search_response.status_code}")
+                return {
+                    "success": False,
+                    "message": f"Failed to fetch contracts: HTTP {search_response.status_code}",
+                    "contracts": []
+                }
 
-            return {"success": True, "contracts": contracts}
+            return {
+                "success": True,
+                "contracts": contracts,
+                "total": len(contracts)
+            }
 
     except Exception as e:
         logger.error(f"Agiloft contracts error: {e}")
