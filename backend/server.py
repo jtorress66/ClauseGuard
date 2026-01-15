@@ -1475,8 +1475,8 @@ async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Req
                     agiloft_data["clause_usage"] = clause_type  # FAR or DFARS
 
                 try:
-                    # First, search if clause already exists using /clause/search endpoint
-                    search_url = f"{_norm_agiloft_base(config.kb_url)}/{clause_table}/search"
+                    # First, search if clause already exists using /{table}/search endpoint
+                    search_url = _build_agiloft_url(config.kb_url, config.kb_name, f"{clause_table}/search")
                     search_payload = {
                         "query": f"clause_title LIKE '%{clause.get('number', '')}%'"
                     }
@@ -1495,16 +1495,18 @@ async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Req
                             # Response could be a list or have a records/result field
                             if isinstance(search_data, list):
                                 existing_records = search_data
+                            elif isinstance(search_data.get("result"), list):
+                                existing_records = search_data["result"]
                             else:
                                 existing_records = search_data.get("records", search_data.get("result", []))
                         except Exception as e:
                             logger.warning(f"Failed to parse search response: {e}")
 
                     if existing_records and len(existing_records) > 0:
-                        # Update existing record using PUT /clause/{id}
+                        # Update existing record using PUT /{table}/{id}
                         record_id = existing_records[0].get("id", existing_records[0].get("$id"))
                         if record_id:
-                            update_url = f"{_norm_agiloft_base(config.kb_url)}/{clause_table}/{record_id}"
+                            update_url = _build_agiloft_url(config.kb_url, config.kb_name, f"{clause_table}/{record_id}")
                             update_response = await client.put(
                                 update_url,
                                 params={"lang": "en"},
@@ -1516,8 +1518,8 @@ async def push_clauses_to_agiloft(push_request: AgiloftPushRequest, request: Req
                             else:
                                 errors_list.append(f"Failed to update {clause.get('number')}: {update_response.status_code}")
                     else:
-                        # Create new record using POST /clause
-                        create_url = f"{_norm_agiloft_base(config.kb_url)}/{clause_table}"
+                        # Create new record using POST /{table}
+                        create_url = _build_agiloft_url(config.kb_url, config.kb_name, clause_table)
                         create_response = await client.post(
                             create_url,
                             params={"lang": "en"},
