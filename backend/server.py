@@ -1768,6 +1768,101 @@ async def update_agiloft_contract(update_request: AgiloftUpdateRequest, request:
         logger.error(f"Agiloft update error: {e}")
         return {"success": False, "message": str(e)}
 
+# ==================== Agiloft Field Mapping Configuration ====================
+
+@agiloft_router.get("/field-mapping")
+async def get_agiloft_field_mapping(request: Request):
+    """Get the current Agiloft field mapping configuration
+    
+    Returns the mapping between our internal field names and Agiloft's field names.
+    Based on Agiloft OpenAPI spec for the 'clause' table (Clause Library).
+    """
+    user = await require_auth(request)
+    
+    return {
+        "success": True,
+        "table_name": "clause",  # Agiloft logical table name
+        "field_mapping": {
+            "our_fields": {
+                "number": "Clause number (e.g., 52.212-4)",
+                "title": "Clause title",
+                "text": "Full clause text",
+                "type": "FAR or DFARS",
+                "summary": "Clause summary/guidance",
+                "flowdown_required": "Boolean - flowdown to subcontractors",
+                "keywords": "Comma-separated keywords",
+                "threshold_amount": "Dollar threshold for applicability"
+            },
+            "agiloft_fields": {
+                "clause_title": "Main title field in Agiloft - we put 'number - title' here",
+                "clause_text": "Full text of the clause",
+                "clause_type": "Reference to Clause Type table (may need ID)",
+                "guidance": "Guidance/summary text",
+                "boilerplate": "Yes/No - indicates flowdown requirement",
+                "condition": "Additional conditions - we put keywords here",
+                "clause_usage": "FAR or DFARS type indicator",
+                "source_contract_type": "Reference to source contract type",
+                "language_id": "Language reference",
+                "default_risk_rating": "Risk rating field",
+                "clause_owner_id": "Owner reference",
+                "owned_by_team_id": "Team reference",
+                "fingerprint": "Unique identifier/hash",
+                "source_clause_id": "Reference to source clause"
+            },
+            "current_mapping": AGILOFT_CLAUSE_FIELD_MAPPING
+        },
+        "endpoints": {
+            "login": "POST /login - JSON body with login, password, KB, lang",
+            "create_clause": "POST /clause - Create new clause record",
+            "get_clause": "GET /clause/{id} - Get clause by ID",
+            "update_clause": "PUT /clause/{id} - Update existing clause",
+            "delete_clause": "DELETE /clause/{id} - Delete clause",
+            "search_clauses": "POST /clause/search - Search clause library",
+            "upsert_clause": "POST /clause/upsert - Create or update clause"
+        }
+    }
+
+class AgiloftFieldMappingUpdate(BaseModel):
+    """Request to update field mapping"""
+    mapping: Dict[str, str]
+
+@agiloft_router.post("/field-mapping")
+async def update_agiloft_field_mapping(mapping_update: AgiloftFieldMappingUpdate, request: Request):
+    """Update the Agiloft field mapping configuration
+    
+    Note: This updates the in-memory mapping. For persistent changes,
+    the mapping should be stored in the database.
+    """
+    user = await require_auth(request)
+    
+    global AGILOFT_CLAUSE_FIELD_MAPPING
+    
+    # Validate that the mapping keys are valid
+    valid_our_fields = ["number", "title", "text", "type", "summary", "flowdown_required", "keywords", "threshold_amount"]
+    
+    for key in mapping_update.mapping.keys():
+        if key not in valid_our_fields:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid field name: {key}. Valid fields: {valid_our_fields}"
+            )
+    
+    # Update the mapping
+    AGILOFT_CLAUSE_FIELD_MAPPING.update(mapping_update.mapping)
+    
+    # Optionally store in database for persistence
+    await db.settings.update_one(
+        {"key": "agiloft_field_mapping"},
+        {"$set": {"value": AGILOFT_CLAUSE_FIELD_MAPPING, "updated_by": user.user_id, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    
+    return {
+        "success": True,
+        "message": "Field mapping updated",
+        "new_mapping": AGILOFT_CLAUSE_FIELD_MAPPING
+    }
+
 # ==================== Batch Export Routes ====================
 
 class BatchExportRequest(BaseModel):
