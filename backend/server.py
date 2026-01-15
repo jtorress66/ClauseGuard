@@ -1301,7 +1301,7 @@ async def agiloft_login(client: httpx.AsyncClient, config: AgiloftConfig) -> Dic
         logger.error(f"Agiloft connection failed: {e}")
         raise HTTPException(
             status_code=503,
-            detail=f"Cannot connect to Agiloft server. Tried: {login_url}. Please verify the URL is correct."
+            detail=f"Cannot connect to Agiloft server at {login_url}. This may be because: 1) The URL is incorrect, 2) The Agiloft instance is on a private network, or 3) IP whitelisting is blocking this connection. Error: {str(e)}"
         )
     except httpx.TimeoutException:
         raise HTTPException(
