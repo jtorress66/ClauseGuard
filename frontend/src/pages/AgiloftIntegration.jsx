@@ -255,26 +255,28 @@ export default function AgiloftIntegration({ user }) {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
             <div>
-              <Label htmlFor="kb_url">KB URL</Label>
+              <Label htmlFor="kb_url">REST API Base URL</Label>
               <Input
                 id="kb_url"
-                placeholder="https://company.agiloft.com/ewws/REST"
+                placeholder="https://company.agiloft.com/ewws/EWRESTful/v1"
                 value={config.kb_url}
                 onChange={(e) => handleConfigChange("kb_url", e.target.value)}
                 data-testid="kb-url-input"
               />
+              <p className="text-xs text-slate-500 mt-1">Format: https://yourinstance.agiloft.com/ewws/EWRESTful/v1</p>
             </div>
             <div>
-              <Label htmlFor="kb_name">KB Name</Label>
+              <Label htmlFor="kb_name">Knowledge Base Name</Label>
               <Input
                 id="kb_name"
-                placeholder="Default"
+                placeholder="YourKBName"
                 value={config.kb_name}
                 onChange={(e) => handleConfigChange("kb_name", e.target.value)}
               />
+              <p className="text-xs text-slate-500 mt-1">Required - your KB identifier</p>
             </div>
             <div>
-              <Label htmlFor="username">Username</Label>
+              <Label htmlFor="username">Username (login)</Label>
               <Input
                 id="username"
                 placeholder="api_user"
@@ -294,7 +296,7 @@ export default function AgiloftIntegration({ user }) {
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 flex-wrap">
             <Button
               onClick={testConnection}
               disabled={testing}
@@ -310,15 +312,23 @@ export default function AgiloftIntegration({ user }) {
             </Button>
 
             {connectionStatus && (
-              <div className={`flex items-center gap-2 ${
+              <div className={`flex items-start gap-2 max-w-xl ${
                 connectionStatus.success ? "text-green-600" : "text-red-600"
               }`}>
                 {connectionStatus.success ? (
-                  <CheckCircle className="w-5 h-5" />
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
                 ) : (
-                  <AlertCircle className="w-5 h-5" />
+                  <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
                 )}
-                <span className="text-sm">{connectionStatus.message}</span>
+                <span className="text-sm">
+                  {connectionStatus.message || connectionStatus.detail || 
+                   (connectionStatus.success ? "Connected successfully" : "Connection failed")}
+                  {connectionStatus.token_preview && (
+                    <span className="block text-xs text-slate-500 mt-1">
+                      Token: {connectionStatus.token_preview}
+                    </span>
+                  )}
+                </span>
               </div>
             )}
           </div>
