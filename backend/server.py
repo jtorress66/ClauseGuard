@@ -1696,7 +1696,10 @@ class AgiloftUpdateRequest(BaseModel):
 
 @agiloft_router.post("/update-contract")
 async def update_agiloft_contract(update_request: AgiloftUpdateRequest, request: Request):
-    """Update a contract in Agiloft with compliance fixes"""
+    """Update a contract in Agiloft with compliance fixes
+    
+    Uses PUT /contract/{id} endpoint per OpenAPI spec.
+    """
     user = await require_auth(request)
 
     config = update_request.config
@@ -1704,11 +1707,15 @@ async def update_agiloft_contract(update_request: AgiloftUpdateRequest, request:
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             login_data = await agiloft_login(client, config)
-            token = login_data.get("access_token") or login_data.get("token") or login_data.get("auth_token") or ""
+            token = login_data.get("access_token")
+            
+            if not token:
+                raise HTTPException(status_code=401, detail="Authentication failed - no token received")
 
-            auth_headers = {"Content-Type": "application/json"}
-            if token:
-                auth_headers["Authorization"] = f"Bearer {token}"
+            auth_headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}"
+            }
 
             update_data = {}
 
@@ -1725,7 +1732,8 @@ async def update_agiloft_contract(update_request: AgiloftUpdateRequest, request:
             update_data["compliance_checked"] = datetime.now(timezone.utc).isoformat()
             update_data["compliance_checker"] = user.name
 
-            update_url = f"{_norm_agiloft_base(config.kb_url)}/Contracts/{update_request.contract_id}"
+            # Use lowercase "contract" per OpenAPI spec
+            update_url = f"{_norm_agiloft_base(config.kb_url)}/contract/{update_request.contract_id}"
             update_response = await client.put(
                 update_url,
                 params={"lang": "en"},
@@ -1740,10 +1748,17 @@ async def update_agiloft_contract(update_request: AgiloftUpdateRequest, request:
                     "updated_fields": list(update_data.keys())
                 }
             else:
+                error_detail = ""
+                try:
+                    error_data = update_response.json()
+                    error_detail = error_data.get("message", error_data.get("error", ""))
+                except:
+                    error_detail = update_response.text[:200]
+                
                 return {
-                    "success": True,
-                    "message": "Contract flagged for update (demo mode)",
-                    "note": "In production, this would update the Agiloft record"
+                    "success": False,
+                    "message": f"Failed to update contract: HTTP {update_response.status_code}",
+                    "detail": error_detail
                 }
 
     except HTTPException as e:
