@@ -87,12 +87,27 @@ Build a Federal Clause Management app that helps government contractors manage F
 1. Add scheduled sync jobs for Agiloft
 2. Email notifications for clause changes
 3. Bulk clause update from acquisition.gov
-4. Enhanced Agiloft field mapping configuration
+4. Enhanced Agiloft field mapping configuration ✅
 
 ## Notes
-- Agiloft integration uses demo/sample data when no live connection is available
+- Agiloft integration now properly validates credentials (no longer returns success with invalid passwords)
 - All protected routes require authentication
 - AI features require Emergent LLM key (already configured)
 
+## Agiloft API Configuration
+- **REST API Base URL format**: `https://yourinstance.agiloft.com/ewws/EWRESTful/v1`
+- **Login endpoint**: POST `/login` with JSON body `{login, password, KB, lang}`
+- **Clause table name**: `clause` (lowercase, singular)
+- **Contract table name**: `contract` (lowercase, singular)
+- **Field mapping** (our fields → Agiloft fields):
+  - number → clause_title
+  - title → clause_text
+  - text → clause_text
+  - type → clause_type
+  - summary → guidance
+  - flowdown_required → boilerplate
+  - keywords → condition
+
 ## Change Log
+- **2025-01-15**: Fixed critical Agiloft login bug - no longer returns "connection successful" with invalid credentials. Added field mapping configuration endpoint. Updated table names to use correct lowercase format per OpenAPI spec. 17/17 Agiloft tests passed.
 - **2025-01-14**: Replaced server.py with user-provided version. Full regression testing passed (33/33 tests). Backend backup saved at /app/backend/server.py.backup
