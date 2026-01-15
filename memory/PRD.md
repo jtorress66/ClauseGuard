@@ -95,19 +95,23 @@ Build a Federal Clause Management app that helps government contractors manage F
 - AI features require Emergent LLM key (already configured)
 
 ## Agiloft API Configuration
-- **REST API Base URL format**: `https://yourinstance.agiloft.com/ewws/EWRESTful/v1`
+- **Instance URL format**: `https://yourinstance.agiloft.com` (without "saas" subdomain)
+- **Full REST API URL**: `{base}/ewws/alrest/{KB}/{endpoint}`
 - **Login endpoint**: POST `/login` with JSON body `{login, password, KB, lang}`
+- **Token location**: `response.result.access_token`
 - **Clause table name**: `clause` (lowercase, singular)
 - **Contract table name**: `contract` (lowercase, singular)
-- **Field mapping** (our fields → Agiloft fields):
-  - number → clause_title
-  - title → clause_text
-  - text → clause_text
-  - type → clause_type
-  - summary → guidance
-  - flowdown_required → boilerplate
-  - keywords → condition
+- **Contract field mapping** (Agiloft → our fields):
+  - `DAOcontract_to_contract.root_contract_title` → contract_title
+  - `DAOcontract_to_contract_type.contract_type` → contract_type
+  - `DAOcontract_to_company.company_name` → company_name
+  - `wfstate` → status
+- **Search capabilities**: 
+  - By Contract ID (exact match via Agiloft query)
+  - By Contract Title, Company Name, Type (client-side filtering)
 
 ## Change Log
-- **2025-01-15**: Fixed critical Agiloft login bug - no longer returns "connection successful" with invalid credentials. Added field mapping configuration endpoint. Updated table names to use correct lowercase format per OpenAPI spec. 17/17 Agiloft tests passed.
-- **2025-01-14**: Replaced server.py with user-provided version. Full regression testing passed (33/33 tests). Backend backup saved at /app/backend/server.py.backup
+- **2025-01-15**: Fixed contract data mapping - now properly extracts title, type, company from Agiloft's nested DAO structure. Added search/filter functionality for contracts (by ID, title, company, type). Contracts now show full details when searched.
+- **2025-01-15**: Fixed Agiloft URL format - removed "saas" subdomain, now uses `/ewws/alrest/{KB}/` path. Fixed token extraction from `result.access_token`.
+- **2025-01-15**: Fixed critical Agiloft login bug - no longer returns "connection successful" with invalid credentials. Added field mapping configuration endpoint. 17/17 Agiloft tests passed.
+- **2025-01-14**: Replaced server.py with user-provided version. Full regression testing passed (33/33 tests).
