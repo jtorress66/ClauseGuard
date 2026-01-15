@@ -4,7 +4,7 @@ import {
   ArrowLeft, Database, RefreshCw, CheckCircle, 
   AlertCircle, Loader2, Settings, Link2, Upload,
   FileText, AlertTriangle, ArrowUpRight, Download,
-  Check, X
+  Check, X, Search
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,6 +50,11 @@ export default function AgiloftIntegration({ user }) {
   const [selectedContract, setSelectedContract] = useState(null);
   const [analyzingContract, setAnalyzingContract] = useState(false);
   const [contractAnalysis, setContractAnalysis] = useState(null);
+  
+  // Contract search filters
+  const [contractSearch, setContractSearch] = useState("");
+  const [contractTypeFilter, setContractTypeFilter] = useState("");
+  const [contractIdFilter, setContractIdFilter] = useState("");
 
   const handleConfigChange = (field, value) => {
     setConfig(prev => ({ ...prev, [field]: value }));
