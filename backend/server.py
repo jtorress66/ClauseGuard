@@ -1224,10 +1224,10 @@ async def root():
 class AgiloftConfig(BaseModel):
     """Agiloft KB configuration
     
-    Expected URL format: https://yourcompany.agiloft.com/ewws/EWRESTful/v1
-    The KB name is passed separately in the request body.
+    Expected URL format: https://yourinstance.saas.agiloft.com
+    The full path /ewws/alrest/{KB}/endpoint is constructed automatically.
     """
-    kb_url: str  # Base REST API URL, e.g., https://yourcompany.agiloft.com/ewws/EWRESTful/v1
+    kb_url: str  # Base Agiloft URL, e.g., https://elitebcopartnerkb.saas.agiloft.com
     username: str
     password: str
     kb_name: str  # Knowledge base name (required)
@@ -1251,25 +1251,37 @@ AGILOFT_CLAUSE_FIELD_MAPPING = {
 }
 
 def _norm_agiloft_base(url: str) -> str:
-    """Normalize Agiloft base URL - remove trailing slashes"""
-    return (url or "").strip().rstrip("/")
+    """Normalize Agiloft base URL - remove trailing slashes and paths"""
+    url = (url or "").strip().rstrip("/")
+    # Remove any path suffixes like /ewws/alrest/KB or /ewws/EWRESTful/v1
+    if "/ewws/" in url:
+        url = url.split("/ewws/")[0]
+    return url
+
+def _build_agiloft_url(base_url: str, kb_name: str, endpoint: str) -> str:
+    """Build Agiloft REST API URL
+    
+    Format: {base_url}/ewws/alrest/{kb_name}/{endpoint}
+    Example: https://elitebcopartnerkb.saas.agiloft.com/ewws/alrest/elitebcoPartnerKB/login
+    """
+    base = _norm_agiloft_base(base_url)
+    return f"{base}/ewws/alrest/{kb_name}/{endpoint}"
 
 async def agiloft_login(client: httpx.AsyncClient, config: AgiloftConfig) -> Dict[str, Any]:
     """
     Agiloft REST API login.
     
-    Per OpenAPI spec, the /login endpoint expects JSON body with:
-    - login: username
-    - password: user password
-    - KB: knowledge base name
-    - lang: language code (default 'en')
+    URL format: {base_url}/ewws/alrest/{KB}/login
+    Example: https://elitebcopartnerkb.saas.agiloft.com/ewws/alrest/elitebcoPartnerKB/login
     
-    Returns access_token on success which must be used as Bearer token.
+    JSON body: {login, password, KB, lang}
+    
+    Response: {"result": {"access_token": "..."}}
+    Token is nested under result.access_token
     """
-    kb_url = _norm_agiloft_base(config.kb_url)
-    login_url = f"{kb_url}/login"
+    login_url = _build_agiloft_url(config.kb_url, config.kb_name, "login")
     
-    # JSON payload per OpenAPI specification
+    # JSON payload 
     payload = {
         "login": config.username,
         "password": config.password,
@@ -1282,14 +1294,14 @@ async def agiloft_login(client: httpx.AsyncClient, config: AgiloftConfig) -> Dic
     try:
         resp = await client.post(
             login_url, 
-            json=payload,  # Use JSON body, not form data
+            json=payload,
             headers={"Content-Type": "application/json"}
         )
     except httpx.ConnectError as e:
         logger.error(f"Agiloft connection failed: {e}")
         raise HTTPException(
             status_code=503,
-            detail=f"Cannot connect to Agiloft server at {kb_url}. Please verify the URL is correct."
+            detail=f"Cannot connect to Agiloft server. Tried: {login_url}. Please verify the URL is correct."
         )
     except httpx.TimeoutException:
         raise HTTPException(
@@ -1299,13 +1311,12 @@ async def agiloft_login(client: httpx.AsyncClient, config: AgiloftConfig) -> Dic
     
     raw_text = resp.text or ""
     logger.info(f"Agiloft login response status: {resp.status_code}")
-    logger.debug(f"Agiloft login response body: {raw_text[:500]}")
+    logger.info(f"Agiloft login response body: {raw_text[:500]}")
     
     # Try to parse JSON response
     try:
         data = resp.json()
     except Exception:
-        # If response is not JSON, it's likely an error page
         logger.error(f"Agiloft returned non-JSON response: {raw_text[:300]}")
         raise HTTPException(
             status_code=401, 
@@ -1342,11 +1353,17 @@ async def agiloft_login(client: httpx.AsyncClient, config: AgiloftConfig) -> Dic
             logger.error(f"Agiloft login error field: {error_msg}")
             raise HTTPException(status_code=401, detail=f"Agiloft authentication failed: {error_msg}")
     
-    # CRITICAL: Verify we got an access_token
-    token = data.get("access_token")
+    # CRITICAL: Extract access_token - it's nested under "result" in Agiloft response
+    # Response format: {"result": {"access_token": "..."}}
+    token = None
+    
+    # First try nested under "result"
+    if isinstance(data.get("result"), dict):
+        token = data["result"].get("access_token")
+    
+    # Fall back to top-level
     if not token:
-        # Try alternative token field names
-        token = data.get("token") or data.get("auth_token") or data.get("accessToken")
+        token = data.get("access_token") or data.get("token") or data.get("auth_token")
     
     if not token:
         logger.error(f"Agiloft login: No access_token in response. Response: {data}")
@@ -1356,7 +1373,9 @@ async def agiloft_login(client: httpx.AsyncClient, config: AgiloftConfig) -> Dic
         )
     
     logger.info(f"Agiloft login successful, token received (length: {len(token)})")
-    return data
+    
+    # Return normalized data with token at top level for easier access
+    return {"access_token": token, "raw_response": data}
 
 @agiloft_router.post("/test-connection")
 async def test_agiloft_connection(config: AgiloftConfig, request: Request):
@@ -1368,17 +1387,15 @@ async def test_agiloft_connection(config: AgiloftConfig, request: Request):
             login_data = await agiloft_login(client, config)
             token = login_data.get("access_token")
             
-            # Get additional info from response
-            expires_in = login_data.get("expires_in")
-            auth_scheme = login_data.get("authentication_scheme", "Bearer")
+            # Construct the URL we used for reference
+            login_url = _build_agiloft_url(config.kb_url, config.kb_name, "login")
 
             return {
                 "success": True,
                 "message": "Successfully connected to Agiloft KB",
                 "kb_name": config.kb_name,
                 "token_preview": f"{token[:20]}..." if token and len(token) > 20 else token,
-                "expires_in": expires_in,
-                "authentication_scheme": auth_scheme
+                "api_url_used": login_url
             }
     except HTTPException:
         raise
