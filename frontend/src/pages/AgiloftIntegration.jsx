@@ -275,15 +275,15 @@ export default function AgiloftIntegration({ user }) {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
             <div>
-              <Label htmlFor="kb_url">REST API Base URL</Label>
+              <Label htmlFor="kb_url">Agiloft Instance URL</Label>
               <Input
                 id="kb_url"
-                placeholder="https://company.agiloft.com/ewws/EWRESTful/v1"
+                placeholder="https://yourinstance.saas.agiloft.com"
                 value={config.kb_url}
                 onChange={(e) => handleConfigChange("kb_url", e.target.value)}
                 data-testid="kb-url-input"
               />
-              <p className="text-xs text-slate-500 mt-1">Format: https://yourinstance.agiloft.com/ewws/EWRESTful/v1</p>
+              <p className="text-xs text-slate-500 mt-1">Base URL only (e.g., https://elitebcopartnerkb.saas.agiloft.com)</p>
             </div>
             <div>
               <Label htmlFor="kb_name">Knowledge Base Name</Label>
