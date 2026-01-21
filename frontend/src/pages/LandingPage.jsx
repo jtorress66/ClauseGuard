@@ -58,7 +58,7 @@ export default function LandingPage() {
       }
     } catch (error) {
       console.error("Auth error:", error);
-      toast.error("Something went wrong. Please try again.");
+      toast.error("Network error. Please check your connection and try again.");
     } finally {
       setLoading(false);
     }
