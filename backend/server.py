@@ -790,7 +790,7 @@ async def ai_search_clauses(query: str, request: Request):
 
     # Build context from indexed clauses - include text snippets for better matching
     clauses_context = "\n".join([
-        f"- {c['number']}: {c['title']} ({c['type']}) | Keywords: {', '.join(c.get('keywords', [])[:5])} | Summary: {c.get('summary', 'N/A')[:150]}"
+        f"- {c['number']}: {c['title']} ({c['type']}) | Keywords: {', '.join(c.get('keywords', [])[:5])} | Summary: {(c.get('summary') or 'N/A')[:150]}"
         for c in all_clauses
     ])
 
