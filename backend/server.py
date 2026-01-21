@@ -522,11 +522,143 @@ async def init_sample_clauses():
 
 # ==================== Auth Routes ====================
 
-# REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+from passlib.context import CryptContext
+
+# Password hashing
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    """Hash a password for storing."""
+    return pwd_context.hash(password)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a stored password against a provided password."""
+    return pwd_context.verify(plain_password, hashed_password)
+
+class RegisterRequest(BaseModel):
+    """User registration request"""
+    email: str
+    password: str
+    name: str
+
+class LoginRequest(BaseModel):
+    """User login request"""
+    email: str
+    password: str
+
+@auth_router.post("/register")
+async def register_user(request: RegisterRequest, response: Response):
+    """Register a new user with email and password"""
+    # Validate email format
+    import re
+    if not re.match(r"[^@]+@[^@]+\.[^@]+", request.email):
+        raise HTTPException(status_code=400, detail="Invalid email format")
+    
+    # Check password strength
+    if len(request.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    
+    # Check if email already exists
+    existing_user = await db.users.find_one({"email": request.email.lower()}, {"_id": 0})
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    # Create user
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+    hashed_password = hash_password(request.password)
+    
+    new_user = {
+        "user_id": user_id,
+        "email": request.email.lower(),
+        "name": request.name,
+        "password_hash": hashed_password,
+        "picture": None,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.users.insert_one(new_user)
+    
+    # Create session
+    session_token = str(uuid.uuid4())
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    
+    session_doc = {
+        "session_id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "session_token": session_token,
+        "expires_at": expires_at.isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.user_sessions.insert_one(session_doc)
+    
+    # Set cookie
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=7 * 24 * 60 * 60
+    )
+    
+    # Return user without password
+    return {
+        "user_id": user_id,
+        "email": request.email.lower(),
+        "name": request.name,
+        "picture": None
+    }
+
+@auth_router.post("/login")
+async def login_user(request: LoginRequest, response: Response):
+    """Login with email and password"""
+    # Find user
+    user_doc = await db.users.find_one({"email": request.email.lower()})
+    if not user_doc:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    # Verify password
+    if not user_doc.get("password_hash"):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    if not verify_password(request.password, user_doc["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    # Create new session
+    session_token = str(uuid.uuid4())
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    
+    session_doc = {
+        "session_id": str(uuid.uuid4()),
+        "user_id": user_doc["user_id"],
+        "session_token": session_token,
+        "expires_at": expires_at.isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.user_sessions.insert_one(session_doc)
+    
+    # Set cookie
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=7 * 24 * 60 * 60
+    )
+    
+    # Return user without password
+    return {
+        "user_id": user_doc["user_id"],
+        "email": user_doc["email"],
+        "name": user_doc["name"],
+        "picture": user_doc.get("picture")
+    }
 
 @auth_router.post("/session")
 async def create_session(request: SessionRequest, response: Response):
-    """Exchange session_id for session_token after Google OAuth"""
+    """Exchange session_id for session_token (legacy Google OAuth - kept for compatibility)"""
     try:
         async with httpx.AsyncClient() as client:
             auth_response = await client.get(
