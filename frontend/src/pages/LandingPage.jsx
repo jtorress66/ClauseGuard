@@ -48,14 +48,7 @@ export default function LandingPage() {
         body: JSON.stringify(payload)
       });
 
-      let data;
-      try {
-        data = await response.json();
-      } catch (parseError) {
-        console.error("Failed to parse response:", parseError);
-        toast.error("Server error. Please try again.");
-        return;
-      }
+      const data = await response.json();
 
       if (response.ok) {
         toast.success(authMode === "login" ? "Welcome back!" : "Account created successfully!");
@@ -65,7 +58,7 @@ export default function LandingPage() {
       }
     } catch (error) {
       console.error("Auth error:", error);
-      toast.error("Network error. Please check your connection.");
+      toast.error("Something went wrong. Please try again.");
     } finally {
       setLoading(false);
     }
