@@ -763,32 +763,63 @@ async def search_clauses(query: str, clause_type: Optional[str] = None, limit: i
 
 @clauses_router.get("/ai-search")
 async def ai_search_clauses(query: str, request: Request):
-    """AI-powered intelligent clause search"""
+    """AI-powered intelligent clause search - ONLY searches indexed acquisition.gov data
+    
+    This endpoint:
+    - Searches ONLY clauses already indexed in our database from acquisition.gov
+    - Does NOT generate or fabricate clause text
+    - Uses AI to understand query intent and match to relevant existing clauses
+    """
     user = await get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required for AI search")
 
-    # Get all clauses for context
-    all_clauses = await db.clauses.find({}, {"_id": 0, "clause_id": 1, "number": 1, "title": 1, "type": 1, "summary": 1, "keywords": 1}).to_list(100)
+    # Get all indexed clauses from our database (sourced from acquisition.gov)
+    all_clauses = await db.clauses.find(
+        {}, 
+        {"_id": 0, "clause_id": 1, "number": 1, "title": 1, "type": 1, "summary": 1, "keywords": 1, "text": 1}
+    ).to_list(500)
+    
+    if not all_clauses:
+        return {
+            "clauses": [],
+            "ai_analysis": "No clauses indexed yet. Please sync from acquisition.gov first.",
+            "total": 0,
+            "source": "acquisition.gov"
+        }
 
+    # Build context from indexed clauses - include text snippets for better matching
     clauses_context = "\n".join([
-        f"- {c['number']}: {c['title']} ({c['type']}) - {c.get('summary', '')}"
+        f"- {c['number']}: {c['title']} ({c['type']}) | Keywords: {', '.join(c.get('keywords', [])[:5])} | Summary: {c.get('summary', 'N/A')[:150]}"
         for c in all_clauses
     ])
 
-    prompt = f"""Based on the user's query, identify the most relevant FAR/DFARS clauses from this list:
+    prompt = f"""You are a Federal Acquisition Regulation (FAR/DFARS) expert assistant. 
+Your task is to identify which clauses from our INDEXED database are most relevant to the user's query.
 
-Available Clauses:
+IMPORTANT RULES:
+1. ONLY recommend clauses that appear in the "Available Clauses" list below
+2. DO NOT invent or fabricate clause numbers that are not in the list
+3. DO NOT generate clause text - only explain why each existing clause is relevant
+4. If no clauses match, say "No matching clauses found in the indexed database"
+
+Available Clauses (from acquisition.gov):
 {clauses_context}
 
 User Query: {query}
 
-Return a JSON array of the most relevant clause numbers (e.g., ["52.212-4", "252.204-7012"]) and a brief explanation of why each is relevant. Format:
-{{"relevant_clauses": ["clause_number1", "clause_number2"], "explanations": {{"clause_number1": "reason", "clause_number2": "reason"}}}}"""
+Respond with ONLY a JSON object in this exact format:
+{{"relevant_clauses": ["52.xxx-x", "252.xxx-xxxx"], "explanations": {{"52.xxx-x": "Brief explanation of relevance", "252.xxx-xxxx": "Brief explanation"}}}}
 
-    ai_response = await get_ai_response(prompt)
+If no clauses match the query, respond with: {{"relevant_clauses": [], "explanations": {{}}}}"""
+
+    ai_response = await get_ai_response(prompt, 
+        system_message="You are a FAR/DFARS clause expert. You ONLY recommend clauses from the provided list - never invent clauses. Keep explanations brief and accurate.")
 
     # Parse AI response and get full clause details
+    relevant_numbers = []
+    explanations = {}
+    
     try:
         import json
         # Try to extract JSON from response
@@ -798,25 +829,32 @@ Return a JSON array of the most relevant clause numbers (e.g., ["52.212-4", "252
             ai_result = json.loads(ai_response[json_start:json_end])
             relevant_numbers = ai_result.get("relevant_clauses", [])
             explanations = ai_result.get("explanations", {})
-        else:
-            relevant_numbers = []
-            explanations = {}
-    except:
+    except Exception as e:
+        logger.warning(f"Failed to parse AI response: {e}")
         relevant_numbers = []
         explanations = {}
 
-    # Fetch full clause details
+    # CRITICAL: Only fetch clauses that actually exist in our database
+    # This ensures we never return fabricated data
     clauses = []
+    valid_clause_numbers = {c["number"] for c in all_clauses}
+    
     for number in relevant_numbers:
-        clause = await db.clauses.find_one({"number": number}, {"_id": 0})
-        if clause:
-            clause["ai_explanation"] = explanations.get(number, "")
-            clauses.append(clause)
+        # Verify the clause exists in our indexed data
+        if number in valid_clause_numbers:
+            clause = await db.clauses.find_one({"number": number}, {"_id": 0})
+            if clause:
+                clause["ai_explanation"] = explanations.get(number, "Relevant to your query")
+                clauses.append(clause)
+        else:
+            logger.warning(f"AI suggested non-existent clause: {number}")
 
     return {
         "clauses": clauses,
-        "ai_analysis": ai_response,
-        "total": len(clauses)
+        "ai_analysis": f"Found {len(clauses)} relevant clauses from acquisition.gov indexed data.",
+        "total": len(clauses),
+        "source": "acquisition.gov",
+        "query_understood": query
     }
 
 @clauses_router.get("/{clause_id}")
