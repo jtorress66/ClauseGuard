@@ -111,6 +111,7 @@ Build a Federal Clause Management app that helps government contractors manage F
   - By Contract Title, Company Name, Type (client-side filtering)
 
 ## Change Log
+- **2025-01-21**: Updated AI search to ONLY use indexed acquisition.gov data - no fabricated clauses. Added source indicator showing "acquisition.gov". Fixed summary NoneType bug. UI now clearly shows data is from authoritative source.
 - **2025-01-21**: Changed authentication from Google OAuth to email/password with registration. Updated entire UI to modern SaaS-style design with soft gradients, modern cards, teal color palette, and enhanced typography. All 12 auth tests passed.
 - **2025-01-15**: Fixed contract data mapping - now properly extracts title, type, company from Agiloft's nested DAO structure. Added search/filter functionality for contracts (by ID, title, company, type).
 - **2025-01-15**: Fixed Agiloft URL format - removed "saas" subdomain, now uses `/ewws/alrest/{KB}/` path. Fixed token extraction from `result.access_token`.
