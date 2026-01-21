@@ -305,11 +305,11 @@ export default function LandingPage() {
                 <div>
                   <label className="form-label">Full Name</label>
                   <div className="relative">
-                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                    <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <Input
                       type="text"
                       placeholder="John Doe"
-                      className="input-modern pl-11"
+                      className="h-11 pl-11 pr-4 bg-white border-slate-200 rounded-lg focus:ring-2 focus:ring-teal-500/20 focus:border-teal-400"
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                       required
@@ -322,11 +322,11 @@ export default function LandingPage() {
               <div>
                 <label className="form-label">Email</label>
                 <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <Input
                     type="email"
                     placeholder="you@company.com"
-                    className="input-modern pl-11"
+                    className="h-11 pl-11 pr-4 bg-white border-slate-200 rounded-lg focus:ring-2 focus:ring-teal-500/20 focus:border-teal-400"
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                     required
@@ -338,11 +338,11 @@ export default function LandingPage() {
               <div>
                 <label className="form-label">Password</label>
                 <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <Input
                     type={showPassword ? "text" : "password"}
-                    placeholder="••••••••"
-                    className="input-modern pl-11 pr-11"
+                    placeholder="Enter your password"
+                    className="h-11 pl-11 pr-11 bg-white border-slate-200 rounded-lg focus:ring-2 focus:ring-teal-500/20 focus:border-teal-400"
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     required
@@ -352,9 +352,9 @@ export default function LandingPage() {
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
                   >
-                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
