@@ -585,12 +585,12 @@ export default function AgiloftIntegration({ user }) {
                 <div className="flex items-end gap-4 flex-wrap">
                   <div>
                     <Label>Clause Type Filter</Label>
-                    <Select value={comparisonClauseType} onValueChange={setComparisonClauseType}>
+                    <Select value={comparisonClauseType || "all"} onValueChange={(val) => setComparisonClauseType(val === "all" ? "" : val)}>
                       <SelectTrigger className="w-40" data-testid="comparison-type-filter">
                         <SelectValue placeholder="All Types" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">All Types</SelectItem>
+                        <SelectItem value="all">All Types</SelectItem>
                         <SelectItem value="FAR">FAR</SelectItem>
                         <SelectItem value="DFARS">DFARS</SelectItem>
                       </SelectContent>
