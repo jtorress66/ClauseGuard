@@ -2624,7 +2624,7 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
     This endpoint:
     1. Takes a list of clause numbers identified as missing in Agiloft
     2. Fetches fresh data from acquisition.gov if requested
-    3. Creates the clauses in Agiloft's clause library
+    3. Creates the clauses in Agiloft's clause library using the new AgiloftClient
     """
     user = await require_auth(request)
     
@@ -2658,74 +2658,73 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
         }
     
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            # Login to Agiloft
-            login_data = await agiloft_login(client, config)
-            token = login_data.get("access_token")
-            
-            if not token:
-                raise HTTPException(status_code=401, detail="Failed to authenticate with Agiloft")
-            
-            auth_headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {token}"
+        # Check if new modules are available
+        if not AGILOFT_CLIENT_AVAILABLE:
+            raise HTTPException(status_code=500, detail="Agiloft client module not available")
+        
+        # Create new AgiloftClient with the correct API format
+        agiloft_config = NewAgiloftConfig(
+            kb_url=config.kb_url,
+            kb_name=config.kb_name,
+            username=config.username,
+            password=config.password
+        )
+        agiloft_client = AgiloftClient(agiloft_config)
+        
+        # Login to Agiloft
+        if not await agiloft_client.login():
+            raise HTTPException(status_code=401, detail="Failed to authenticate with Agiloft")
+        
+        logger.info("Agiloft login successful for upload")
+        
+        uploaded_count = 0
+        errors_list = []
+        
+        for clause in clauses_to_upload:
+            # Map fields to Agiloft format - MUST include clause_number for matching
+            agiloft_payload = {
+                "clause_number": clause.get('number', ''),  # Critical field for comparison
+                "clause_title": f"{clause.get('number', '')} - {clause.get('title', '')}",
+                "clause_text": clause.get("text", "")[:50000] if clause.get("text") else f"See acquisition.gov for full text of {clause.get('number', '')}",
+                "clause_type": clause.get("type", "FAR"),  # FAR or DFARS
+                "guidance": clause.get("summary", "") or f"Clause from acquisition.gov: {clause.get('number', '')}",
             }
             
-            uploaded_count = 0
-            errors_list = []
-            
-            for clause in clauses_to_upload:
-                # Map fields to Agiloft format
-                agiloft_payload = {
-                    "clause_title": f"{clause.get('number', '')} - {clause.get('title', '')}",
-                    "clause_text": clause.get("text", "")[:50000],  # Limit text size
-                    "clause_usage": clause.get("type", "FAR"),
-                    "guidance": clause.get("summary", "") or f"Clause from acquisition.gov: {clause.get('number', '')}",
-                    "boilerplate": "Yes" if clause.get("flowdown_required") else "No",
-                    "condition": ", ".join(clause.get("keywords", [])[:10])
-                }
+            try:
+                # Use upsert to create or update the clause
+                result = await agiloft_client.upsert_clause(agiloft_payload, query_field="clause_number")
                 
-                # Create clause in Agiloft
-                create_url = _build_agiloft_url(config.kb_url, config.kb_name, "clause")
-                
-                try:
-                    # IMPORTANT: Add lang parameter as query string - required by Agiloft API
-                    create_resp = await client.post(
-                        create_url,
-                        params={"lang": "en"},
-                        json=agiloft_payload,
-                        headers=auth_headers
-                    )
-                    
-                    if create_resp.status_code in [200, 201]:
-                        uploaded_count += 1
-                        logger.info(f"Successfully uploaded clause {clause.get('number')} to Agiloft")
-                    else:
-                        error_msg = create_resp.text[:200]
-                        errors_list.append({
-                            "clause_number": clause.get("number"),
-                            "error": f"HTTP {create_resp.status_code}: {error_msg}"
-                        })
-                        logger.error(f"Failed to upload clause {clause.get('number')}: {error_msg}")
-                except Exception as e:
+                if result.get("success"):
+                    uploaded_count += 1
+                    logger.info(f"Successfully uploaded clause {clause.get('number')} to Agiloft (action: {result.get('action', 'unknown')})")
+                else:
+                    error_msg = result.get("error", "Unknown error")
                     errors_list.append({
                         "clause_number": clause.get("number"),
-                        "error": str(e)
+                        "error": error_msg
                     })
-                    logger.error(f"Exception uploading clause {clause.get('number')}: {e}")
-            
-            return {
-                "success": uploaded_count > 0,
-                "message": f"Uploaded {uploaded_count} of {len(clauses_to_upload)} clauses to Agiloft",
-                "uploaded": uploaded_count,
-                "total_requested": len(clauses_to_upload),
-                "errors": errors_list
-            }
+                    logger.error(f"Failed to upload clause {clause.get('number')}: {error_msg}")
+            except Exception as e:
+                errors_list.append({
+                    "clause_number": clause.get("number"),
+                    "error": str(e)
+                })
+                logger.error(f"Exception uploading clause {clause.get('number')}: {e}")
+        
+        return {
+            "success": uploaded_count > 0,
+            "message": f"Uploaded {uploaded_count} of {len(clauses_to_upload)} clauses to Agiloft",
+            "uploaded": uploaded_count,
+            "total_requested": len(clauses_to_upload),
+            "errors": errors_list
+        }
             
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Upload to Agiloft error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 # ==================== Batch Export Routes ====================
