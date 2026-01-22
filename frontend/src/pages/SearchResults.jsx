@@ -54,8 +54,10 @@ export default function SearchResults() {
     setAiAnalysis(null);
     
     try {
+      // For AI search, always attempt it first - let the backend handle auth
+      // This ensures we don't rely on potentially stale isAuthenticated state
       let url;
-      if (aiSearch && isAuthenticated) {
+      if (aiSearch) {
         url = `${API}/clauses/ai-search?query=${encodeURIComponent(searchQuery)}`;
       } else {
         url = `${API}/clauses/search?query=${encodeURIComponent(searchQuery)}`;
@@ -72,10 +74,20 @@ export default function SearchResults() {
         if (data.ai_analysis) {
           setAiAnalysis(data.ai_analysis);
         }
+        // Update auth state if we successfully hit AI search
+        if (aiSearch) {
+          setIsAuthenticated(true);
+        }
       } else if (response.status === 401 && aiSearch) {
         toast.error("Please sign in to use AI search");
         setUseAI(false);
+        setIsAuthenticated(false);
+        // Fall back to regular search
         performSearch(searchQuery, type, false);
+        return;
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        toast.error(errorData.detail || "Search failed");
       }
     } catch (error) {
       console.error("Search error:", error);
