@@ -156,6 +156,12 @@ class AgiloftClient:
                     data = response.json()
                     logger.info(f"Search response keys: {list(data.keys()) if isinstance(data, dict) else 'list'}")
                     
+                    # Log raw response for first result
+                    if isinstance(data, dict) and "result" in data:
+                        result = data["result"]
+                        if isinstance(result, list) and len(result) > 0:
+                            logger.info(f"RAW first result: {str(result[0])[:1000]}")
+                    
                     # Handle Agiloft's response format
                     clauses = self._extract_records(data)
                     logger.info(f"Extracted {len(clauses)} clause records")
@@ -163,34 +169,20 @@ class AgiloftClient:
                     # Log sample to see field structure
                     if clauses:
                         sample = clauses[0]
-                        logger.info(f"Sample clause fields: {list(sample.keys())}")
-                        logger.info(f"Sample data: {sample}")
+                        logger.info(f"Sample clause ALL fields: {list(sample.keys())}")
+                        for key, val in sample.items():
+                            logger.info(f"  {key}: {str(val)[:100]}")
                         
                         # Check if clause_number is present
                         if not sample.get("clause_number"):
-                            logger.warning("clause_number field is empty - API may not be returning requested fields")
-                            logger.info("Attempting to fetch individual records to get full data...")
+                            logger.warning("clause_number field is empty - trying to find alternative fields")
                             
-                            # Try fetching individual records
-                            enriched_clauses = []
-                            for i, clause in enumerate(clauses[:min(len(clauses), 100)]):  # Limit for performance
-                                if clause.get("id"):
-                                    full_clause = await self._get_clause_by_id(client, clause["id"])
-                                    if full_clause:
-                                        enriched_clauses.append(full_clause)
-                                    else:
-                                        enriched_clauses.append(clause)
-                                else:
-                                    enriched_clauses.append(clause)
-                                
-                                if (i + 1) % 20 == 0:
-                                    logger.info(f"Fetched {i + 1}/{min(len(clauses), 100)} clause details")
-                            
-                            # Add remaining clauses without enrichment if any
-                            if len(clauses) > 100:
-                                enriched_clauses.extend(clauses[100:])
-                            
-                            return enriched_clauses
+                            # Look for any field that might contain clause number
+                            for key, val in sample.items():
+                                if val and isinstance(val, str):
+                                    from acqgov_scraper import SECTION_RE
+                                    if SECTION_RE.search(str(val)):
+                                        logger.info(f"Found clause number pattern in field '{key}': {val[:100]}")
                     
                     return clauses
                 else:
