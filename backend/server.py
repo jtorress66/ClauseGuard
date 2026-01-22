@@ -2595,50 +2595,36 @@ async def compare_clauses_with_agiloft(comparison_request: ClauseComparisonReque
                     logger.warning(f"Error querying table '{table_name}': {e}")
             
             # Build normalized Agiloft clause map
-            # Try multiple possible field names for clause number
+            # Use the confirmed field name 'clause_number' from OpenAPI spec
             agiloft_clause_map = {}  # normalized_number -> clause
             agiloft_original_numbers = {}  # normalized_number -> original value
             unmatched_agiloft = []  # Clauses that couldn't be normalized
             
-            # Possible field names for clause number (case variations)
-            clause_num_fields = ["clause_number", "Clause_Number", "ClauseNumber", 
-                                "clause_no", "Clause_No", "clauseNumber", "number"]
-            clause_title_fields = ["clause_title", "Clause_Title", "ClauseTitle", 
-                                  "title", "Title", "name", "Name"]
-            
             for agiloft_clause in agiloft_clauses:
-                # Try multiple possible field names for clause number
-                clause_num = ""
-                for field in clause_num_fields:
-                    val = agiloft_clause.get(field, "")
-                    if val:
-                        clause_num = str(val)
-                        break
+                # Primary field is 'clause_number' as confirmed by user
+                clause_num = agiloft_clause.get("clause_number", "") or ""
                 
-                # If clause_number is empty, try extracting from clause_title
+                # If clause_number is empty, try extracting from clause_title as fallback
                 if not clause_num:
-                    for field in clause_title_fields:
-                        val = agiloft_clause.get(field, "")
-                        if val:
-                            clause_num = str(val)
-                            break
+                    clause_title = agiloft_clause.get("clause_title", "") or ""
+                    # Try to extract clause number from title (e.g., "52.204-17 - Some Title")
+                    extracted = normalize_clause_number(clause_title)
+                    if extracted:
+                        clause_num = extracted
                 
                 normalized = normalize_clause_number(clause_num)
                 
                 if normalized:
                     agiloft_clause_map[normalized] = agiloft_clause
                     agiloft_original_numbers[normalized] = clause_num
+                    logger.debug(f"Matched Agiloft clause: {clause_num} -> {normalized}")
                 else:
                     # Store clauses that don't match our pattern
-                    # Also capture the actual field names we found
                     unmatched_entry = {
                         "id": agiloft_clause.get("id"),
-                        "raw_clause_num": clause_num[:100] if clause_num else None,
+                        "clause_number": clause_num[:100] if clause_num else None,
+                        "clause_title": (agiloft_clause.get("clause_title") or "")[:100],
                     }
-                    for field in clause_title_fields:
-                        if agiloft_clause.get(field):
-                            unmatched_entry["clause_title"] = str(agiloft_clause.get(field))[:100]
-                            break
                     unmatched_agiloft.append(unmatched_entry)
             
             agiloft_clause_numbers = set(agiloft_clause_map.keys())
