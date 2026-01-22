@@ -60,6 +60,7 @@ export default function AgiloftIntegration({ user }) {
   const [comparing, setComparing] = useState(false);
   const [comparisonResult, setComparisonResult] = useState(null);
   const [comparisonClauseType, setComparisonClauseType] = useState("");
+  const [comparisonSource, setComparisonSource] = useState("acquisition_gov");
   const [selectedMissingClauses, setSelectedMissingClauses] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [fetchFresh, setFetchFresh] = useState(false);
