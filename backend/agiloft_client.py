@@ -113,112 +113,54 @@ class AgiloftClient:
                              top: int = 5000) -> List[Dict]:
         """
         Search Clause Library and return all clauses.
-        Uses multiple strategies to try to get clause_number field.
         """
         if not self.token:
             if not await self.login():
                 raise Exception("Failed to authenticate with Agiloft")
         
-        clauses = []
-        
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            # Strategy 1: Try search with explicit fields
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # Try the search endpoint with $select
             url = f"{self.base_url}/clause/search"
+            payload = {
+                "$select": "id,clause_number,clause_title,clause_type,clause_text",
+                "$top": top
+            }
             
-            # Try different payload formats
-            payloads_to_try = [
-                # Format 1: Fields in $select (standard OData)
-                {"$select": "id,clause_number,clause_title,clause_type", "$top": top},
-                # Format 2: select without $ prefix
-                {"select": "id,clause_number,clause_title,clause_type", "top": top},
-                # Format 3: Query parameter style
-                {},
-            ]
+            logger.info(f"Searching Agiloft: {url}")
             
-            for i, payload in enumerate(payloads_to_try):
-                logger.info(f"Trying search payload format {i+1}: {payload}")
+            try:
+                response = await client.post(
+                    url,
+                    params={"lang": "en"},
+                    json=payload,
+                    headers=self._get_auth_headers()
+                )
                 
-                try:
-                    if payload:
-                        response = await client.post(
-                            url,
-                            params={"lang": "en"},
-                            json=payload,
-                            headers=self._get_auth_headers()
-                        )
-                    else:
-                        # Try GET with query params
-                        response = await client.get(
-                            f"{self.base_url}/clause",
-                            params={"lang": "en", "$top": str(top), "$select": "id,clause_number,clause_title"},
-                            headers=self._get_auth_headers()
-                        )
+                if response.status_code == 200:
+                    data = response.json()
+                    clauses = self._extract_records(data)
+                    logger.info(f"Got {len(clauses)} clauses from Agiloft")
                     
-                    if response.status_code == 200:
-                        data = response.json()
-                        records = self._extract_records(data)
+                    if clauses:
+                        sample = clauses[0]
+                        logger.info(f"Fields returned: {list(sample.keys())}")
                         
-                        if records:
-                            sample = records[0]
-                            logger.info(f"Format {i+1} returned fields: {list(sample.keys())}")
-                            
-                            # Check if we got clause_number
-                            if sample.get("clause_number"):
-                                logger.info(f"SUCCESS! Format {i+1} returned clause_number: {sample.get('clause_number')}")
-                                return records
-                            else:
-                                logger.info(f"Format {i+1} did not return clause_number field")
-                                clauses = records  # Save for later
-                except Exception as e:
-                    logger.warning(f"Format {i+1} failed: {e}")
-            
-            # Strategy 2: If search doesn't return clause_number, try fetching individual records
-            if clauses and not clauses[0].get("clause_number"):
-                logger.info("Search did not return clause_number. Trying individual record fetch...")
-                
-                enriched = []
-                for i, clause in enumerate(clauses):
-                    clause_id = clause.get("id")
-                    if clause_id:
-                        # Fetch individual record
-                        record_url = f"{self.base_url}/clause/{clause_id}"
-                        try:
-                            resp = await client.get(
-                                record_url,
-                                params={"lang": "en"},
-                                headers=self._get_auth_headers()
-                            )
-                            if resp.status_code == 200:
-                                data = resp.json()
-                                if data.get("success") and data.get("result"):
-                                    result = data["result"]
-                                    # Extract from DAO wrapper
-                                    dao_key = next((k for k in result.keys() if k.startswith("DAO")), None)
-                                    if dao_key and isinstance(result[dao_key], dict):
-                                        record = result[dao_key]
-                                        if i < 3:
-                                            logger.info(f"Individual record {clause_id} fields: {list(record.keys())}")
-                                            logger.info(f"clause_number value: {record.get('clause_number', 'N/A')}")
-                                        enriched.append(record)
-                                        continue
-                        except Exception as e:
-                            if i < 3:
-                                logger.debug(f"Error fetching record {clause_id}: {e}")
-                    enriched.append(clause)
+                        # Check if clause_number is returned
+                        has_clause_number = any(c.get("clause_number") for c in clauses[:10])
+                        
+                        if not has_clause_number:
+                            logger.warning("Agiloft REST API is NOT returning clause_number field!")
+                            logger.warning("This is a known Agiloft limitation - the API only returns system fields.")
+                            logger.warning("Returning clauses with just IDs - comparison will not work correctly.")
                     
-                    # Rate limit and progress
-                    if (i + 1) % 50 == 0:
-                        logger.info(f"Fetched {i+1}/{len(clauses)} individual records")
-                        await asyncio.sleep(0.1)
+                    return clauses
+                else:
+                    logger.error(f"Search failed: {response.status_code}")
+                    return []
                     
-                    # Stop early if individual fetch also doesn't return clause_number
-                    if i == 5 and enriched and not enriched[-1].get("clause_number"):
-                        logger.warning("Individual record fetch also not returning clause_number - stopping early")
-                        return clauses
-                
-                return enriched if enriched else clauses
-            
-            return clauses
+            except Exception as e:
+                logger.error(f"Search error: {e}")
+                return []
     
     async def _get_clause_by_id(self, client: httpx.AsyncClient, clause_id: int) -> Optional[Dict]:
         """Fetch a single clause by ID to get full field data."""
