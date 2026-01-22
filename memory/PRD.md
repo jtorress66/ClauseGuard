@@ -123,6 +123,7 @@ Build a Federal Clause Management app that helps government contractors manage F
   - By Contract Title, Company Name, Type (client-side filtering)
 
 ## Change Log
+- **2025-01-22**: Fixed clause comparison logic - now properly fetches from acquisition.gov using improved scraper based on user's reference Python code. Uses correct regex pattern `(\d{1,4}\.\d{1,4}(?:[-–—](?=\d)\d{1,6})*)` for clause number extraction. Added proper FAR and DFARS index fetching from Part 52 and Part 252 pages. Fixed field name handling for Agiloft API responses. Comparison now normalizes clause numbers before comparing to handle variations like en-dashes, trailing periods, and prefixes.
 - **2025-01-22**: Fixed AI Search button not returning results - button now triggers search when toggled. Added Clause Comparison feature to compare FAR/DFARS clauses between local DB and Agiloft KB with ability to upload missing clauses. Fixed SelectItem empty value bug in Agiloft Integration page. All bugs reported by user verified fixed.
 - **2025-01-21**: Updated AI search to ONLY use indexed acquisition.gov data - no fabricated clauses. Added source indicator showing "acquisition.gov". Fixed summary NoneType bug. UI now clearly shows data is from authoritative source.
 - **2025-01-21**: Changed authentication from Google OAuth to email/password with registration. Updated entire UI to modern SaaS-style design with soft gradients, modern cards, teal color palette, and enhanced typography. All 12 auth tests passed.
