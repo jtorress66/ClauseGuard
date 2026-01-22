@@ -3,6 +3,7 @@ Agiloft REST API Client Module
 Based on OpenAPI spec from user's Agiloft instance
 """
 import os
+import asyncio
 import httpx
 import logging
 from typing import List, Dict, Optional, Any
