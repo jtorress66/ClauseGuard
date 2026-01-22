@@ -339,8 +339,8 @@ export default function AgiloftIntegration({ user }) {
     setSelectedMissingClauses([]);
 
     try {
-      // Use the new comparison endpoint
-      const response = await fetch(`${API}/comparison/compare`, {
+      // Use the original Agiloft comparison endpoint
+      const response = await fetch(`${API}/agiloft/compare-clauses`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -351,25 +351,13 @@ export default function AgiloftIntegration({ user }) {
         })
       });
 
-      // Clone the response before reading to avoid "body stream already read" error
-      const responseClone = response.clone();
-      
-      let result;
-      try {
-        result = await response.json();
-      } catch (jsonError) {
-        // If JSON parsing fails, try to get text from clone
-        const text = await responseClone.text();
-        console.error("JSON parse error, response text:", text);
-        toast.error("Failed to parse server response");
-        return;
-      }
-      
       if (!response.ok) {
-        toast.error(result.detail || result.message || "Comparison failed");
+        const errorData = await response.json().catch(() => ({}));
+        toast.error(errorData.detail || "Comparison failed");
         return;
       }
       
+      const result = await response.json();
       setComparisonResult(result);
       
       if (result.success) {
