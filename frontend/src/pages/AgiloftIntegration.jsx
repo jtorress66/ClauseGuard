@@ -87,21 +87,30 @@ export default function AgiloftIntegration({ user }) {
       });
 
       let result;
-      const contentType = response.headers.get("content-type");
       
-      if (contentType && contentType.includes("application/json")) {
-        result = await response.json();
-      } else {
-        // Non-JSON response (e.g., Cloudflare error page)
+      // Try to parse JSON response, with fallback for non-JSON or consumed body
+      try {
         const text = await response.text();
+        try {
+          result = JSON.parse(text);
+        } catch (parseError) {
+          // Response is not JSON
+          result = { 
+            success: false, 
+            message: text.substring(0, 200) || `Server error (${response.status})`,
+            detail: text.substring(0, 500)
+          };
+        }
+      } catch (readError) {
+        // Body already consumed or other read error
         result = { 
           success: false, 
-          message: `Server error (${response.status}): ${text.substring(0, 200)}`,
-          detail: text.substring(0, 500)
+          message: `Server error (${response.status}): Unable to read response`,
+          detail: readError.message
         };
       }
       
-      // Handle HTTP error status codes (like 401, 503, etc.)
+      // Handle HTTP error status codes (like 401, 503, 520, etc.)
       if (!response.ok) {
         const errorMessage = result.detail || result.message || `HTTP Error ${response.status}`;
         setConnectionStatus({ success: false, message: errorMessage });
