@@ -3057,6 +3057,16 @@ try:
 except ImportError as e:
     logger.warning(f"Could not load comparison_routes: {e}")
 
+# Import the new Agiloft client and scraper modules
+try:
+    from agiloft_client import AgiloftClient, AgiloftConfig as NewAgiloftConfig
+    from acqgov_scraper import scrape_far_clauses, scrape_dfars_clauses, normalize_clause_id
+    AGILOFT_CLIENT_AVAILABLE = True
+    logger.info("Agiloft client module loaded successfully")
+except ImportError as e:
+    AGILOFT_CLIENT_AVAILABLE = False
+    logger.warning(f"Could not load agiloft_client module: {e}")
+
 app.include_router(api_router)
 app.include_router(auth_router)
 app.include_router(clauses_router)
