@@ -351,10 +351,22 @@ export default function AgiloftIntegration({ user }) {
         })
       });
 
-      const result = await response.json();
+      // Clone the response before reading to avoid "body stream already read" error
+      const responseClone = response.clone();
+      
+      let result;
+      try {
+        result = await response.json();
+      } catch (jsonError) {
+        // If JSON parsing fails, try to get text from clone
+        const text = await responseClone.text();
+        console.error("JSON parse error, response text:", text);
+        toast.error("Failed to parse server response");
+        return;
+      }
       
       if (!response.ok) {
-        toast.error(result.detail || "Comparison failed");
+        toast.error(result.detail || result.message || "Comparison failed");
         return;
       }
       
@@ -366,6 +378,7 @@ export default function AgiloftIntegration({ user }) {
         toast.error(result.message || "Comparison failed");
       }
     } catch (error) {
+      console.error("Comparison error:", error);
       toast.error(`Comparison failed: ${error.message}`);
     } finally {
       setComparing(false);
