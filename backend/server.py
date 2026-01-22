@@ -2457,35 +2457,16 @@ async def compare_clauses_with_agiloft(comparison_request: ClauseComparisonReque
         # Fetch FAR clauses (Part 52)
         if not comparison_request.clause_type or comparison_request.clause_type == "FAR":
             far_clauses = await fetch_far_index()
-            for c in far_clauses:
-                source_clauses.append({
-                    "number": c["number"],
-                    "title": c["title"],
-                    "type": "FAR"
-                })
+            logger.info(f"Fetched {len(far_clauses)} FAR clauses from acquisition.gov")
+            source_clauses.extend(far_clauses)
         
-        # For DFARS, we'll check common DFARS clause ranges
+        # Fetch DFARS clauses (Part 252)
         if not comparison_request.clause_type or comparison_request.clause_type == "DFARS":
-            # Common DFARS clause prefixes - 252.2xx series
-            dfars_prefixes = ["252.201", "252.203", "252.204", "252.205", "252.206", 
-                            "252.207", "252.208", "252.209", "252.211", "252.212",
-                            "252.213", "252.215", "252.216", "252.217", "252.219",
-                            "252.222", "252.223", "252.225", "252.227", "252.228",
-                            "252.229", "252.231", "252.232", "252.234", "252.235",
-                            "252.236", "252.237", "252.239", "252.242", "252.243",
-                            "252.244", "252.245", "252.246", "252.247", "252.249"]
-            
-            # We'll generate some common DFARS clause numbers
-            # In production, this should be fetched from acquisition.gov/dfars
-            for prefix in dfars_prefixes[:5]:  # Limit for now
-                for i in range(1, 30):  # Common suffixes
-                    source_clauses.append({
-                        "number": f"{prefix}-{i:04d}" if i > 999 else f"{prefix}-{i}",
-                        "title": f"DFARS Clause {prefix}-{i}",
-                        "type": "DFARS"
-                    })
+            dfars_clauses = await fetch_dfars_index()
+            logger.info(f"Fetched {len(dfars_clauses)} DFARS clauses from acquisition.gov")
+            source_clauses.extend(dfars_clauses)
         
-        logger.info(f"Fetched {len(source_clauses)} clauses from acquisition.gov")
+        logger.info(f"Total fetched {len(source_clauses)} clauses from acquisition.gov")
     
     # Build normalized source clause map
     source_clause_map = {}  # normalized_number -> clause
@@ -2501,6 +2482,9 @@ async def compare_clauses_with_agiloft(comparison_request: ClauseComparisonReque
     source_clause_numbers = set(source_clause_map.keys())
     
     logger.info(f"Source ({source_name}) clauses loaded: {len(source_clauses)}, Normalized unique: {len(source_clause_numbers)}")
+    if source_clause_numbers:
+        sample = list(source_clause_numbers)[:5]
+        logger.info(f"Sample source clause numbers: {sample}")
     
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -2517,7 +2501,8 @@ async def compare_clauses_with_agiloft(comparison_request: ClauseComparisonReque
             }
             
             # Search for all clauses in Agiloft
-            # CRITICAL: Based on Agiloft UI showing "Clause Library" table with "Clause Number" column
+            # Based on user's reference code, the table is "clause_library" or "clause"
+            # and field names could be "Part Number" or "clause_number"
             # The API table name might be 'clause_library' or 'clause'
             # The clause number field might be 'clause_number', 'Clause_Number', etc.
             
