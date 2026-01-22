@@ -2437,8 +2437,14 @@ async def compare_clauses_with_agiloft(comparison_request: ClauseComparisonReque
                     if agiloft_clauses:
                         sample = agiloft_clauses[0]
                         logger.info(f"Sample Agiloft clause fields: {list(sample.keys())}")
+                        logger.info(f"Sample raw clause data: {str(sample)[:500]}")
                         logger.info(f"Sample clause_number: {sample.get('clause_number', 'N/A')}")
-                        logger.info(f"Sample clause_title: {sample.get('clause_title', 'N/A')[:80]}")
+                        logger.info(f"Sample clause_title: {str(sample.get('clause_title', 'N/A'))[:80]}")
+                        
+                        # Log first few records to understand structure
+                        for i, rec in enumerate(agiloft_clauses[:3]):
+                            logger.info(f"Record {i} keys: {list(rec.keys())}")
+                            logger.info(f"Record {i} data (truncated): {str(rec)[:300]}")
                 else:
                     logger.warning(f"Agiloft clause search returned {search_resp.status_code}: {search_resp.text[:500]}")
                     
