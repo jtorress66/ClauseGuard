@@ -2448,66 +2448,18 @@ async def compare_clauses_with_agiloft(comparison_request: ClauseComparisonReque
                         
                 except Exception as e:
                     logger.warning(f"Error querying table '{table_name}': {e}")
-                    
-                    # Handle Agiloft's nested response format
-                    if isinstance(search_data, dict):
-                        if "result" in search_data:
-                            result = search_data["result"]
-                            if isinstance(result, list):
-                                agiloft_clauses = result
-                            elif isinstance(result, dict) and "value" in result:
-                                agiloft_clauses = result["value"]
-                            elif isinstance(result, dict):
-                                agiloft_clauses = [result] if result else []
-                        elif "value" in search_data:
-                            agiloft_clauses = search_data["value"]
-                        elif "records" in search_data:
-                            agiloft_clauses = search_data["records"]
-                    elif isinstance(search_data, list):
-                        agiloft_clauses = search_data
-                    
-                    # Extract DAO objects if present
-                    extracted_clauses = []
-                    for item in agiloft_clauses:
-                        if isinstance(item, dict):
-                            # Check for DAO wrapper - Agiloft nests data under DAOtablename keys
-                            dao_key = next((k for k in item.keys() if k.startswith("DAO")), None)
-                            if dao_key and isinstance(item[dao_key], dict):
-                                clause_data = item[dao_key].copy()
-                                # Also include the record ID from the parent if not in nested
-                                if "id" not in clause_data and "id" in item:
-                                    clause_data["id"] = item["id"]
-                                extracted_clauses.append(clause_data)
-                            else:
-                                extracted_clauses.append(item)
-                    agiloft_clauses = extracted_clauses
-                    
-                    logger.info(f"Agiloft returned {len(agiloft_clauses)} clauses")
-                    
-                    # Log sample clause data for debugging
-                    if agiloft_clauses:
-                        sample = agiloft_clauses[0]
-                        logger.info(f"Sample Agiloft clause fields: {list(sample.keys())}")
-                        logger.info(f"Sample raw clause data: {str(sample)[:500]}")
-                        logger.info(f"Sample clause_number: {sample.get('clause_number', 'N/A')}")
-                        logger.info(f"Sample clause_title: {str(sample.get('clause_title', 'N/A'))[:80]}")
-                        
-                        # Log first few records to understand structure
-                        for i, rec in enumerate(agiloft_clauses[:3]):
-                            logger.info(f"Record {i} keys: {list(rec.keys())}")
-                            logger.info(f"Record {i} data (truncated): {str(rec)[:300]}")
-                else:
-                    logger.warning(f"Agiloft clause search returned {search_resp.status_code}: {search_resp.text[:500]}")
-                    
-            except Exception as e:
-                logger.error(f"Error searching Agiloft clauses: {e}")
-                agiloft_clauses = []
             
             # Build normalized Agiloft clause map
-            # PRIORITY: Use clause_number field first, then fall back to extracting from clause_title
+            # Try multiple possible field names for clause number
             agiloft_clause_map = {}  # normalized_number -> clause
             agiloft_original_numbers = {}  # normalized_number -> original value
             unmatched_agiloft = []  # Clauses that couldn't be normalized
+            
+            # Possible field names for clause number (case variations)
+            clause_num_fields = ["clause_number", "Clause_Number", "ClauseNumber", 
+                                "clause_no", "Clause_No", "clauseNumber", "number"]
+            clause_title_fields = ["clause_title", "Clause_Title", "ClauseTitle", 
+                                  "title", "Title", "name", "Name"]
             
             for agiloft_clause in agiloft_clauses:
                 # Try clause_number field first (this is the dedicated field in Agiloft)
