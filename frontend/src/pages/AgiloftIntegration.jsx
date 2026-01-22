@@ -88,26 +88,35 @@ export default function AgiloftIntegration({ user }) {
 
       let result;
       
-      // Try to parse JSON response, with fallback for non-JSON or consumed body
-      try {
-        const text = await response.text();
-        try {
-          result = JSON.parse(text);
-        } catch (parseError) {
-          // Response is not JSON
-          result = { 
-            success: false, 
-            message: text.substring(0, 200) || `Server error (${response.status})`,
-            detail: text.substring(0, 500)
-          };
-        }
-      } catch (readError) {
-        // Body already consumed or other read error
+      // Handle Cloudflare 520 error specifically
+      if (response.status === 520) {
         result = { 
           success: false, 
-          message: `Server error (${response.status}): Unable to read response`,
-          detail: readError.message
+          message: "Cannot connect to Agiloft server. The server may be unreachable, the URL may be incorrect, or IP whitelisting may be blocking the connection.",
+          detail: "HTTP 520 - Origin server returned an unexpected response"
         };
+      } else {
+        // Try to parse response body
+        try {
+          const text = await response.text();
+          try {
+            result = JSON.parse(text);
+          } catch (parseError) {
+            // Response is not JSON
+            result = { 
+              success: false, 
+              message: text.substring(0, 200) || `Server error (${response.status})`,
+              detail: text.substring(0, 500)
+            };
+          }
+        } catch (readError) {
+          // Body already consumed or other read error
+          result = { 
+            success: false, 
+            message: `Server error (${response.status}): Unable to read response`,
+            detail: readError.message
+          };
+        }
       }
       
       // Handle HTTP error status codes (like 401, 503, 520, etc.)
