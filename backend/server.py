@@ -326,54 +326,202 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
         return None
 
 async def fetch_far_index() -> List[Dict[str, str]]:
-    """Fetch FAR clause index from acquisition.gov"""
+    """Fetch FAR clause index from acquisition.gov - improved to match reference implementation"""
     clauses = []
+    SECTION_RE = re.compile(r"(?<!\d)(\d{1,4}\.\d{1,4}(?:[-–—](?=\d)\d{1,6})*)(?!\d)")
+    
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            # Fetch Part 52 index (contract clauses)
-            response = await client.get(
-                "https://www.acquisition.gov/far/part-52",
-                follow_redirects=True
-            )
-
-            if response.status_code == 200:
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            client.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            })
+            
+            # Fetch Part 52 index (main FAR contract clauses)
+            part_urls = [
+                "https://www.acquisition.gov/far/part-52"
+            ]
+            
+            # First, get the main FAR page to discover all Part 52 subsections
+            main_response = await client.get("https://www.acquisition.gov/far/part-52")
+            if main_response.status_code == 200:
                 from bs4 import BeautifulSoup
-                soup = BeautifulSoup(response.text, 'html.parser')
-
-                # Find all clause links
-                for link in soup.find_all('a'):
+                main_soup = BeautifulSoup(main_response.text, 'html.parser')
+                
+                # Find all links to subparts of Part 52
+                for link in main_soup.find_all('a', href=True):
                     href = link.get('href', '')
-                    text = link.get_text().strip()
-
-                    # Match FAR clause pattern (52.xxx-x)
-                    import re
-                    match = re.search(r'52\.\d{3}-\d+', text)
-                    if match:
-                        clause_num = match.group()
-                        # Extract title after the clause number
-                        title = text.replace(clause_num, "").strip()
-                        if title.startswith("-"):
-                            title = title[1:].strip()
-
-                        clauses.append({
-                            "number": clause_num,
-                            "title": title or f"FAR Clause {clause_num}",
-                            "type": "FAR"
-                        })
-
-                # Remove duplicates
-                seen = set()
-                unique_clauses = []
-                for c in clauses:
-                    if c["number"] not in seen:
-                        seen.add(c["number"])
-                        unique_clauses.append(c)
-
-                return unique_clauses[:100]  # Limit to first 100
-
+                    if '/far/part-52' in href.lower() and href not in part_urls:
+                        full_url = f"https://www.acquisition.gov{href}" if href.startswith('/') else href
+                        if full_url.startswith('https://www.acquisition.gov/far/'):
+                            part_urls.append(full_url)
+            
+            # Limit to prevent too many requests
+            part_urls = list(set(part_urls))[:20]
+            
+            for part_url in part_urls:
+                try:
+                    response = await client.get(part_url)
+                    
+                    if response.status_code == 200:
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(response.text, 'html.parser')
+                        
+                        # Extract clauses from headings (h2, h3, h4, h5, h6)
+                        for heading in soup.find_all(['h2', 'h3', 'h4', 'h5', 'h6']):
+                            text = heading.get_text(' ', strip=True)
+                            match = SECTION_RE.search(text)
+                            if match:
+                                clause_num = normalize_clause_number_acqgov(match.group(1))
+                                # Extract title after the clause number
+                                title = text.split(match.group(0), 1)[-1].strip()
+                                title = title.lstrip(' .-–—:').strip()
+                                
+                                if clause_num and clause_num.startswith('52.'):
+                                    clauses.append({
+                                        "number": clause_num,
+                                        "title": title or f"FAR Clause {clause_num}",
+                                        "type": "FAR"
+                                    })
+                        
+                        # Also check links that might contain clause references
+                        for link in soup.find_all('a'):
+                            link_text = link.get_text(' ', strip=True)
+                            match = SECTION_RE.search(link_text)
+                            if match:
+                                clause_num = normalize_clause_number_acqgov(match.group(1))
+                                title = link_text.split(match.group(0), 1)[-1].strip()
+                                title = title.lstrip(' .-–—:').strip()
+                                
+                                if clause_num and clause_num.startswith('52.'):
+                                    clauses.append({
+                                        "number": clause_num,
+                                        "title": title or f"FAR Clause {clause_num}",
+                                        "type": "FAR"
+                                    })
+                    
+                    await asyncio.sleep(0.2)  # Be respectful to the server
+                    
+                except Exception as e:
+                    logger.warning(f"Error fetching {part_url}: {e}")
+                    continue
+            
+            # Remove duplicates, keeping the one with the longest title
+            clause_map = {}
+            for c in clauses:
+                num = c["number"]
+                if num not in clause_map or len(c["title"]) > len(clause_map[num]["title"]):
+                    clause_map[num] = c
+            
+            return list(clause_map.values())
+    
     except Exception as e:
         logger.error(f"Error fetching FAR index: {e}")
+    
+    return clauses
 
+def normalize_clause_number_acqgov(clause_id: str) -> str:
+    """Normalize clause number from acquisition.gov - handles dashes and formatting"""
+    if not clause_id:
+        return clause_id
+    
+    # Replace en-dash, em-dash with regular hyphen
+    _DASHES = "\u2010\u2011\u2012\u2013\u2014\u2212"
+    s = unicodedata.normalize("NFKC", str(clause_id))
+    s = re.sub(f"[{re.escape(_DASHES)}]", "-", s)
+    s = s.replace("\u00A0", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+async def fetch_dfars_index() -> List[Dict[str, str]]:
+    """Fetch DFARS clause index from acquisition.gov"""
+    clauses = []
+    SECTION_RE = re.compile(r"(?<!\d)(\d{1,4}\.\d{1,4}(?:[-–—](?=\d)\d{1,6})*)(?!\d)")
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            client.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            })
+            
+            # DFARS Part 252 contains the clauses
+            part_urls = ["https://www.acquisition.gov/dfars/part-252"]
+            
+            # First, discover all Part 252 subsections
+            main_response = await client.get("https://www.acquisition.gov/dfars/part-252")
+            if main_response.status_code == 200:
+                from bs4 import BeautifulSoup
+                main_soup = BeautifulSoup(main_response.text, 'html.parser')
+                
+                for link in main_soup.find_all('a', href=True):
+                    href = link.get('href', '')
+                    if '/dfars/part-252' in href.lower() or '/dfars/252' in href.lower():
+                        full_url = f"https://www.acquisition.gov{href}" if href.startswith('/') else href
+                        if full_url.startswith('https://www.acquisition.gov/dfars/'):
+                            part_urls.append(full_url)
+            
+            # Limit to prevent too many requests
+            part_urls = list(set(part_urls))[:20]
+            
+            for part_url in part_urls:
+                try:
+                    response = await client.get(part_url)
+                    
+                    if response.status_code == 200:
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(response.text, 'html.parser')
+                        
+                        # Extract clauses from headings
+                        for heading in soup.find_all(['h2', 'h3', 'h4', 'h5', 'h6']):
+                            text = heading.get_text(' ', strip=True)
+                            match = SECTION_RE.search(text)
+                            if match:
+                                clause_num = normalize_clause_number_acqgov(match.group(1))
+                                title = text.split(match.group(0), 1)[-1].strip()
+                                title = title.lstrip(' .-–—:').strip()
+                                
+                                if clause_num and clause_num.startswith('252.'):
+                                    clauses.append({
+                                        "number": clause_num,
+                                        "title": title or f"DFARS Clause {clause_num}",
+                                        "type": "DFARS"
+                                    })
+                        
+                        # Also check links
+                        for link in soup.find_all('a'):
+                            link_text = link.get_text(' ', strip=True)
+                            match = SECTION_RE.search(link_text)
+                            if match:
+                                clause_num = normalize_clause_number_acqgov(match.group(1))
+                                title = link_text.split(match.group(0), 1)[-1].strip()
+                                title = title.lstrip(' .-–—:').strip()
+                                
+                                if clause_num and clause_num.startswith('252.'):
+                                    clauses.append({
+                                        "number": clause_num,
+                                        "title": title or f"DFARS Clause {clause_num}",
+                                        "type": "DFARS"
+                                    })
+                    
+                    await asyncio.sleep(0.2)
+                    
+                except Exception as e:
+                    logger.warning(f"Error fetching {part_url}: {e}")
+                    continue
+            
+            # Remove duplicates
+            clause_map = {}
+            for c in clauses:
+                num = c["number"]
+                if num not in clause_map or len(c["title"]) > len(clause_map[num]["title"]):
+                    clause_map[num] = c
+            
+            return list(clause_map.values())
+    
+    except Exception as e:
+        logger.error(f"Error fetching DFARS index: {e}")
+    
     return clauses
 
 # ==================== Initialize Sample Data ====================
