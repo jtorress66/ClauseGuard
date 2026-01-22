@@ -554,17 +554,258 @@ export default function AgiloftIntegration({ user }) {
         </div>
 
         {/* Tabs for different functions */}
-        <Tabs defaultValue="push" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2 lg:w-auto lg:inline-grid">
+        <Tabs defaultValue="compare" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-3 lg:w-auto lg:inline-grid">
+            <TabsTrigger value="compare" className="gap-2">
+              <RefreshCw className="w-4 h-4" />
+              Compare Clauses
+            </TabsTrigger>
             <TabsTrigger value="push" className="gap-2">
               <Upload className="w-4 h-4" />
-              Push Clauses to Agiloft
+              Push Clauses
             </TabsTrigger>
             <TabsTrigger value="analyze" className="gap-2">
               <FileText className="w-4 h-4" />
-              Analyze Agiloft Contracts
+              Analyze Contracts
             </TabsTrigger>
           </TabsList>
+
+          {/* Compare Clauses Tab */}
+          <TabsContent value="compare">
+            <div className="bg-white rounded-xl border border-slate-200 p-6">
+              <h3 className="font-heading font-bold text-lg text-navy-900 mb-2">
+                Compare FAR/DFARS Clauses with Agiloft KB
+              </h3>
+              <p className="text-slate-600 mb-6">
+                Identify which clauses from acquisition.gov are missing in your Agiloft Knowledge Base and upload them directly.
+              </p>
+
+              <div className="space-y-4">
+                {/* Filter by clause type */}
+                <div className="flex items-end gap-4 flex-wrap">
+                  <div>
+                    <Label>Clause Type Filter</Label>
+                    <Select value={comparisonClauseType} onValueChange={setComparisonClauseType}>
+                      <SelectTrigger className="w-40" data-testid="comparison-type-filter">
+                        <SelectValue placeholder="All Types" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">All Types</SelectItem>
+                        <SelectItem value="FAR">FAR</SelectItem>
+                        <SelectItem value="DFARS">DFARS</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
+                  <Button
+                    onClick={compareClausesWithAgiloft}
+                    disabled={comparing || !connectionStatus?.success}
+                    className="bg-teal-600 hover:bg-teal-700"
+                    data-testid="compare-clauses-btn"
+                  >
+                    {comparing ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Comparing...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-4 h-4 mr-2" />
+                        Compare Clauses
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                {/* Comparison Results */}
+                {comparisonResult && (
+                  <div className="space-y-6 mt-6">
+                    {/* Summary Stats */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="text-center p-4 bg-blue-50 rounded-lg border border-blue-100">
+                        <div className="text-2xl font-bold text-blue-600">{comparisonResult.total_local_clauses}</div>
+                        <div className="text-xs text-slate-500">Local DB Clauses</div>
+                      </div>
+                      <div className="text-center p-4 bg-purple-50 rounded-lg border border-purple-100">
+                        <div className="text-2xl font-bold text-purple-600">{comparisonResult.total_agiloft_clauses}</div>
+                        <div className="text-xs text-slate-500">Agiloft Clauses</div>
+                      </div>
+                      <div className="text-center p-4 bg-amber-50 rounded-lg border border-amber-100">
+                        <div className="text-2xl font-bold text-amber-600">{comparisonResult.missing_in_agiloft_count}</div>
+                        <div className="text-xs text-slate-500">Missing in Agiloft</div>
+                      </div>
+                      <div className="text-center p-4 bg-green-50 rounded-lg border border-green-100">
+                        <div className="text-2xl font-bold text-green-600">{comparisonResult.matched_count}</div>
+                        <div className="text-xs text-slate-500">Matched</div>
+                      </div>
+                    </div>
+
+                    {/* Missing in Agiloft - with selection */}
+                    {comparisonResult.missing_in_agiloft?.length > 0 && (
+                      <div className="bg-amber-50 rounded-lg p-4 border border-amber-200">
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center gap-2">
+                            <AlertTriangle className="w-5 h-5 text-amber-600" />
+                            <span className="font-medium text-amber-800">
+                              Clauses Missing in Agiloft ({comparisonResult.missing_in_agiloft.length})
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={selectAllMissingClauses}
+                              className="text-amber-700 hover:bg-amber-100"
+                            >
+                              Select All
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={clearAllSelections}
+                              className="text-amber-700 hover:bg-amber-100"
+                            >
+                              Clear
+                            </Button>
+                          </div>
+                        </div>
+                        
+                        <div className="max-h-64 overflow-y-auto space-y-2">
+                          {comparisonResult.missing_in_agiloft.map(clause => (
+                            <div 
+                              key={clause.number}
+                              className={`flex items-center gap-3 p-2 rounded cursor-pointer transition-colors ${
+                                selectedMissingClauses.includes(clause.number) 
+                                  ? "bg-amber-100 border border-amber-300" 
+                                  : "bg-white/50 hover:bg-amber-100/50"
+                              }`}
+                              onClick={() => toggleClauseSelection(clause.number)}
+                              data-testid={`missing-clause-${clause.number}`}
+                            >
+                              <input 
+                                type="checkbox"
+                                checked={selectedMissingClauses.includes(clause.number)}
+                                onChange={() => toggleClauseSelection(clause.number)}
+                                className="w-4 h-4 text-amber-600 rounded"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono font-medium text-amber-800">{clause.number}</span>
+                                  <Badge className={
+                                    clause.type === "FAR" 
+                                      ? "bg-blue-100 text-blue-700" 
+                                      : "bg-purple-100 text-purple-700"
+                                  }>
+                                    {clause.type}
+                                  </Badge>
+                                  {clause.flowdown_required && (
+                                    <Badge className="bg-red-100 text-red-700 text-xs">Flowdown</Badge>
+                                  )}
+                                </div>
+                                <p className="text-sm text-slate-600 truncate">{clause.title}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Upload Options */}
+                        <div className="mt-4 pt-4 border-t border-amber-200">
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <input 
+                                type="checkbox"
+                                id="fetchFresh"
+                                checked={fetchFresh}
+                                onChange={(e) => setFetchFresh(e.target.checked)}
+                                className="w-4 h-4 text-teal-600 rounded"
+                              />
+                              <Label htmlFor="fetchFresh" className="text-sm text-slate-700 cursor-pointer">
+                                Fetch fresh data from acquisition.gov
+                              </Label>
+                            </div>
+                            <span className="text-sm text-amber-700">
+                              {selectedMissingClauses.length} selected
+                            </span>
+                          </div>
+                          
+                          <Button
+                            onClick={uploadMissingClausesToAgiloft}
+                            disabled={uploading || selectedMissingClauses.length === 0 || !connectionStatus?.success}
+                            className="w-full bg-amber-600 hover:bg-amber-700 text-white"
+                            data-testid="upload-missing-btn"
+                          >
+                            {uploading ? (
+                              <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                Uploading...
+                              </>
+                            ) : (
+                              <>
+                                <Upload className="w-4 h-4 mr-2" />
+                                Upload {selectedMissingClauses.length} Clauses to Agiloft
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Matched Clauses */}
+                    {comparisonResult.matched_clauses?.length > 0 && (
+                      <div className="bg-green-50 rounded-lg p-4 border border-green-200">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Check className="w-5 h-5 text-green-600" />
+                          <span className="font-medium text-green-800">
+                            Matched Clauses ({comparisonResult.matched_count})
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
+                          {comparisonResult.matched_clauses.slice(0, 20).map(clause => (
+                            <Badge 
+                              key={clause.number} 
+                              variant="outline" 
+                              className="border-green-300 text-green-700"
+                            >
+                              {clause.number}
+                            </Badge>
+                          ))}
+                          {comparisonResult.matched_clauses.length > 20 && (
+                            <Badge variant="outline" className="border-slate-300">
+                              +{comparisonResult.matched_clauses.length - 20} more
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Missing in Local DB */}
+                    {comparisonResult.missing_in_local?.length > 0 && (
+                      <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Database className="w-5 h-5 text-blue-600" />
+                          <span className="font-medium text-blue-800">
+                            In Agiloft but not in Local DB ({comparisonResult.missing_in_local_count})
+                          </span>
+                        </div>
+                        <div className="max-h-32 overflow-y-auto space-y-1">
+                          {comparisonResult.missing_in_local.slice(0, 10).map((clause, idx) => (
+                            <div key={idx} className="text-sm text-blue-700">
+                              {clause.clause_title || clause.agiloft_id}
+                            </div>
+                          ))}
+                          {comparisonResult.missing_in_local.length > 10 && (
+                            <div className="text-sm text-slate-500">
+                              +{comparisonResult.missing_in_local.length - 10} more
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </TabsContent>
 
           {/* Push Clauses Tab */}
           <TabsContent value="push">
