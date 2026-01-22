@@ -272,7 +272,7 @@ async def compare_clauses(compare_request: CompareRequest):
             "success": True,
             "source": "acquisition.gov",
             "total_acqgov": len(acqgov_clauses),
-            "total_agiloft": len(agiloft_clauses),
+            "total_agiloft": len(agiloft_clause_numbers_raw),
             "matched_count": len(matched_numbers),
             "missing_in_agiloft_count": len(missing_in_agiloft),
             "missing_in_acqgov_count": len(missing_in_acqgov),
