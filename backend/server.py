@@ -2508,16 +2508,64 @@ async def compare_clauses_with_agiloft(comparison_request: ClauseComparisonReque
             
             agiloft_clauses = []
             table_names_to_try = ["clause_library", "clause"]
+            actual_table_name = None
+            discovered_fields = []
             
             for table_name in table_names_to_try:
+                # First, try to get the table schema/metadata to discover field names
+                schema_url = _build_agiloft_url(config.kb_url, config.kb_name, f"{table_name}")
+                
+                logger.info(f"Trying to get schema for table '{table_name}': {schema_url}")
+                
+                try:
+                    # Get table schema/structure
+                    schema_resp = await client.get(
+                        schema_url,
+                        params={"lang": "en", "$metadata": "true"},
+                        headers=auth_headers
+                    )
+                    
+                    if schema_resp.status_code == 200:
+                        schema_data = schema_resp.json()
+                        logger.info(f"Schema response for '{table_name}': {str(schema_data)[:1000]}")
+                        
+                        # Try to extract field names from metadata
+                        if isinstance(schema_data, dict):
+                            if "result" in schema_data and isinstance(schema_data["result"], dict):
+                                # Look for field definitions
+                                result = schema_data["result"]
+                                for key, value in result.items():
+                                    if isinstance(value, dict) and "fields" in value:
+                                        discovered_fields = list(value["fields"].keys())
+                                    elif key == "fields" and isinstance(value, list):
+                                        discovered_fields = value
+                                    elif key == "columns" and isinstance(value, list):
+                                        discovered_fields = [c.get("name") or c for c in value if c]
+                except Exception as e:
+                    logger.warning(f"Could not get schema for '{table_name}': {e}")
+                
+                # Now search for records
                 search_url = _build_agiloft_url(config.kb_url, config.kb_name, f"{table_name}/search")
                 
-                # Don't specify $select to get ALL fields - we need to discover field names
+                # Try to request ALL possible clause-related fields
+                # These are common field names in Agiloft Clause Library
+                possible_fields = [
+                    "id", "clause_number", "part_number", "number", 
+                    "clause_title", "title", "name",
+                    "clause_type", "clause_type0", "part_type", "type",
+                    "clause_text", "text", "body", "content",
+                    "clause_usage", "usage", "guidance",
+                    "wfstate", "status", "boilerplate", "condition",
+                    "created_date", "modified_date", "creator_login"
+                ]
+                
                 search_payload = {
+                    "$select": ",".join(possible_fields),
                     "$top": 2000
                 }
                 
                 logger.info(f"Trying Agiloft table '{table_name}': {search_url}")
+                logger.info(f"Requesting fields: {possible_fields[:10]}...")
                 
                 try:
                     search_resp = await client.post(
