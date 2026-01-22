@@ -326,6 +326,117 @@ export default function AgiloftIntegration({ user }) {
     }
   };
 
+  // Compare clauses between local DB and Agiloft
+  const compareClausesWithAgiloft = async () => {
+    if (!connectionStatus?.success) {
+      toast.error("Please test connection first");
+      return;
+    }
+
+    setComparing(true);
+    setComparisonResult(null);
+    setSelectedMissingClauses([]);
+
+    try {
+      const response = await fetch(`${API}/agiloft/compare-clauses`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          config,
+          clause_type: comparisonClauseType || null
+        })
+      });
+
+      const result = await response.json();
+      
+      if (!response.ok) {
+        toast.error(result.detail || "Comparison failed");
+        return;
+      }
+      
+      setComparisonResult(result);
+      
+      if (result.success) {
+        toast.success(`Comparison complete! Found ${result.missing_in_agiloft_count} clauses missing in Agiloft`);
+      } else {
+        toast.error(result.message || "Comparison failed");
+      }
+    } catch (error) {
+      toast.error(`Comparison failed: ${error.message}`);
+    } finally {
+      setComparing(false);
+    }
+  };
+
+  // Upload selected missing clauses to Agiloft
+  const uploadMissingClausesToAgiloft = async () => {
+    if (!connectionStatus?.success) {
+      toast.error("Please test connection first");
+      return;
+    }
+
+    if (selectedMissingClauses.length === 0) {
+      toast.error("Please select clauses to upload");
+      return;
+    }
+
+    setUploading(true);
+
+    try {
+      const response = await fetch(`${API}/agiloft/upload-missing-clauses`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          config,
+          clause_numbers: selectedMissingClauses,
+          fetch_fresh: fetchFresh
+        })
+      });
+
+      const result = await response.json();
+      
+      if (!response.ok) {
+        toast.error(result.detail || "Upload failed");
+        return;
+      }
+      
+      if (result.success) {
+        toast.success(result.message);
+        // Refresh comparison after upload
+        compareClausesWithAgiloft();
+      } else {
+        toast.error(result.message || "Upload failed");
+      }
+    } catch (error) {
+      toast.error(`Upload failed: ${error.message}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // Toggle clause selection for upload
+  const toggleClauseSelection = (clauseNumber) => {
+    setSelectedMissingClauses(prev => 
+      prev.includes(clauseNumber)
+        ? prev.filter(n => n !== clauseNumber)
+        : [...prev, clauseNumber]
+    );
+  };
+
+  // Select all missing clauses
+  const selectAllMissingClauses = () => {
+    if (comparisonResult?.missing_in_agiloft) {
+      setSelectedMissingClauses(comparisonResult.missing_in_agiloft.map(c => c.number));
+    }
+  };
+
+  // Clear all selections
+  const clearAllSelections = () => {
+    setSelectedMissingClauses([]);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Header */}
