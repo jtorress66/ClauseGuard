@@ -2462,12 +2462,21 @@ async def compare_clauses_with_agiloft(comparison_request: ClauseComparisonReque
                                   "title", "Title", "name", "Name"]
             
             for agiloft_clause in agiloft_clauses:
-                # Try clause_number field first (this is the dedicated field in Agiloft)
-                clause_num = agiloft_clause.get("clause_number", "") or ""
+                # Try multiple possible field names for clause number
+                clause_num = ""
+                for field in clause_num_fields:
+                    val = agiloft_clause.get(field, "")
+                    if val:
+                        clause_num = str(val)
+                        break
                 
                 # If clause_number is empty, try extracting from clause_title
                 if not clause_num:
-                    clause_num = agiloft_clause.get("clause_title", "") or ""
+                    for field in clause_title_fields:
+                        val = agiloft_clause.get(field, "")
+                        if val:
+                            clause_num = str(val)
+                            break
                 
                 normalized = normalize_clause_number(clause_num)
                 
@@ -2476,13 +2485,16 @@ async def compare_clauses_with_agiloft(comparison_request: ClauseComparisonReque
                     agiloft_original_numbers[normalized] = clause_num
                 else:
                     # Store clauses that don't match our pattern
-                    unmatched_agiloft.append({
+                    # Also capture the actual field names we found
+                    unmatched_entry = {
                         "id": agiloft_clause.get("id"),
-                        "clause_number": agiloft_clause.get("clause_number"),
-                        "clause_title": agiloft_clause.get("clause_title", "")[:100],
-                        "clause_type0": agiloft_clause.get("clause_type0"),
-                        "clause_usage": agiloft_clause.get("clause_usage")
-                    })
+                        "raw_clause_num": clause_num[:100] if clause_num else None,
+                    }
+                    for field in clause_title_fields:
+                        if agiloft_clause.get(field):
+                            unmatched_entry["clause_title"] = str(agiloft_clause.get(field))[:100]
+                            break
+                    unmatched_agiloft.append(unmatched_entry)
             
             agiloft_clause_numbers = set(agiloft_clause_map.keys())
             
