@@ -56,6 +56,14 @@ export default function AgiloftIntegration({ user }) {
   const [contractTypeFilter, setContractTypeFilter] = useState("");
   const [contractIdFilter, setContractIdFilter] = useState("");
 
+  // Clause comparison state
+  const [comparing, setComparing] = useState(false);
+  const [comparisonResult, setComparisonResult] = useState(null);
+  const [comparisonClauseType, setComparisonClauseType] = useState("");
+  const [selectedMissingClauses, setSelectedMissingClauses] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [fetchFresh, setFetchFresh] = useState(false);
+
   const handleConfigChange = (field, value) => {
     setConfig(prev => ({ ...prev, [field]: value }));
   };
