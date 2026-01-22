@@ -2366,37 +2366,88 @@ async def compare_clauses_with_agiloft(comparison_request: ClauseComparisonReque
             }
             
             # Search for all clauses in Agiloft
-            # CRITICAL: Request the "clause_number" field which is the actual clause identifier
-            search_url = _build_agiloft_url(config.kb_url, config.kb_name, "clause/search")
-            
-            # Request all relevant fields including clause_number
-            search_payload = {
-                "$select": "id,clause_title,clause_number,clause_type0,clause_usage,guidance,wfstate,boilerplate",
-                "$top": 2000
-            }
-            
-            logger.info(f"Searching Agiloft clauses: {search_url}")
-            logger.info(f"Search payload: {search_payload}")
+            # CRITICAL: Based on Agiloft UI showing "Clause Library" table with "Clause Number" column
+            # The API table name might be 'clause_library' or 'clause'
+            # The clause number field might be 'clause_number', 'Clause_Number', etc.
             
             agiloft_clauses = []
+            table_names_to_try = ["clause_library", "clause"]
             
-            try:
-                # IMPORTANT: Add lang parameter as query string - required by Agiloft API
-                search_resp = await client.post(
-                    search_url,
-                    params={"lang": "en"},
-                    json=search_payload,
-                    headers=auth_headers
-                )
+            for table_name in table_names_to_try:
+                search_url = _build_agiloft_url(config.kb_url, config.kb_name, f"{table_name}/search")
                 
-                logger.info(f"Agiloft search response status: {search_resp.status_code}")
+                # Don't specify $select to get ALL fields - we need to discover field names
+                search_payload = {
+                    "$top": 2000
+                }
                 
-                if search_resp.status_code == 200:
-                    search_data = search_resp.json()
+                logger.info(f"Trying Agiloft table '{table_name}': {search_url}")
+                
+                try:
+                    search_resp = await client.post(
+                        search_url,
+                        params={"lang": "en"},
+                        json=search_payload,
+                        headers=auth_headers
+                    )
                     
-                    # Log raw response structure for debugging
-                    if isinstance(search_data, dict):
-                        logger.info(f"Agiloft response keys: {list(search_data.keys())}")
+                    logger.info(f"Table '{table_name}' response status: {search_resp.status_code}")
+                    
+                    if search_resp.status_code == 200:
+                        search_data = search_resp.json()
+                        
+                        # Log raw response structure for debugging
+                        if isinstance(search_data, dict):
+                            logger.info(f"Response keys for '{table_name}': {list(search_data.keys())}")
+                        
+                        # Handle Agiloft's nested response format
+                        temp_clauses = []
+                        if isinstance(search_data, dict):
+                            if "result" in search_data:
+                                result = search_data["result"]
+                                if isinstance(result, list):
+                                    temp_clauses = result
+                                elif isinstance(result, dict) and "value" in result:
+                                    temp_clauses = result["value"]
+                                elif isinstance(result, dict):
+                                    temp_clauses = [result] if result else []
+                            elif "value" in search_data:
+                                temp_clauses = search_data["value"]
+                            elif "records" in search_data:
+                                temp_clauses = search_data["records"]
+                        elif isinstance(search_data, list):
+                            temp_clauses = search_data
+                        
+                        # Extract DAO objects if present
+                        extracted_clauses = []
+                        for item in temp_clauses:
+                            if isinstance(item, dict):
+                                dao_key = next((k for k in item.keys() if k.startswith("DAO")), None)
+                                if dao_key and isinstance(item[dao_key], dict):
+                                    clause_data = item[dao_key].copy()
+                                    if "id" not in clause_data and "id" in item:
+                                        clause_data["id"] = item["id"]
+                                    extracted_clauses.append(clause_data)
+                                else:
+                                    extracted_clauses.append(item)
+                        
+                        if extracted_clauses:
+                            agiloft_clauses = extracted_clauses
+                            logger.info(f"SUCCESS: Found {len(agiloft_clauses)} clauses in table '{table_name}'")
+                            
+                            # Log ALL fields of first record to understand structure
+                            if agiloft_clauses:
+                                sample = agiloft_clauses[0]
+                                logger.info(f"ALL fields in '{table_name}' record: {list(sample.keys())}")
+                                for key, val in list(sample.items())[:20]:
+                                    val_str = str(val)[:80] if val else "None"
+                                    logger.info(f"  Field '{key}': {val_str}")
+                            break  # Found clauses, stop trying tables
+                    else:
+                        logger.warning(f"Table '{table_name}' returned {search_resp.status_code}: {search_resp.text[:200]}")
+                        
+                except Exception as e:
+                    logger.warning(f"Error querying table '{table_name}': {e}")
                     
                     # Handle Agiloft's nested response format
                     if isinstance(search_data, dict):
