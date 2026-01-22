@@ -117,6 +117,8 @@ class AgiloftClient:
         if select_fields is None:
             select_fields = ["id", "clause_number", "clause_title", "clause_type", "clause_text"]
         
+        # Try different query formats - Agiloft API can be finicky
+        # Format 1: Standard $select
         payload = {
             "$select": ",".join(select_fields),
             "$top": top
@@ -127,6 +129,7 @@ class AgiloftClient:
         
         async with httpx.AsyncClient(timeout=120.0) as client:
             try:
+                # First try with $select in body
                 response = await client.post(
                     url,
                     params={"lang": "en"},
@@ -148,8 +151,33 @@ class AgiloftClient:
                     if clauses:
                         sample = clauses[0]
                         logger.info(f"Sample clause fields: {list(sample.keys())}")
-                        logger.info(f"Sample clause_number: {sample.get('clause_number', 'N/A')}")
-                        logger.info(f"Sample clause_title: {str(sample.get('clause_title', 'N/A'))[:50]}")
+                        logger.info(f"Sample data: {sample}")
+                        
+                        # Check if clause_number is present
+                        if not sample.get("clause_number"):
+                            logger.warning("clause_number field is empty - API may not be returning requested fields")
+                            logger.info("Attempting to fetch individual records to get full data...")
+                            
+                            # Try fetching individual records
+                            enriched_clauses = []
+                            for i, clause in enumerate(clauses[:min(len(clauses), 100)]):  # Limit for performance
+                                if clause.get("id"):
+                                    full_clause = await self._get_clause_by_id(client, clause["id"])
+                                    if full_clause:
+                                        enriched_clauses.append(full_clause)
+                                    else:
+                                        enriched_clauses.append(clause)
+                                else:
+                                    enriched_clauses.append(clause)
+                                
+                                if (i + 1) % 20 == 0:
+                                    logger.info(f"Fetched {i + 1}/{min(len(clauses), 100)} clause details")
+                            
+                            # Add remaining clauses without enrichment if any
+                            if len(clauses) > 100:
+                                enriched_clauses.extend(clauses[100:])
+                            
+                            return enriched_clauses
                     
                     return clauses
                 else:
@@ -159,6 +187,33 @@ class AgiloftClient:
             except Exception as e:
                 logger.error(f"Search error: {e}")
                 return []
+    
+    async def _get_clause_by_id(self, client: httpx.AsyncClient, clause_id: int) -> Optional[Dict]:
+        """Fetch a single clause by ID to get full field data."""
+        url = f"{self.base_url}/clause/{clause_id}"
+        
+        try:
+            response = await client.get(
+                url,
+                params={"lang": "en"},
+                headers=self._get_auth_headers()
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success") and data.get("result"):
+                    result = data["result"]
+                    # Extract from DAO wrapper if present
+                    if isinstance(result, dict):
+                        dao_key = next((k for k in result.keys() if k.startswith("DAO")), None)
+                        if dao_key and isinstance(result[dao_key], dict):
+                            return result[dao_key]
+                        return result
+                    return result
+        except Exception as e:
+            logger.debug(f"Error fetching clause {clause_id}: {e}")
+        
+        return None
     
     def _extract_records(self, data: Any) -> List[Dict]:
         """
