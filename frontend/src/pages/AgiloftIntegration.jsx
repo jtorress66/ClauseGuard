@@ -577,12 +577,25 @@ export default function AgiloftIntegration({ user }) {
                 Compare FAR/DFARS Clauses with Agiloft KB
               </h3>
               <p className="text-slate-600 mb-6">
-                Identify which clauses from acquisition.gov are missing in your Agiloft Knowledge Base and upload them directly.
+                Compare clauses from acquisition.gov (FAR index) with your Agiloft Knowledge Base. Identify missing clauses and upload them directly.
               </p>
 
               <div className="space-y-4">
-                {/* Filter by clause type */}
+                {/* Filter options */}
                 <div className="flex items-end gap-4 flex-wrap">
+                  <div>
+                    <Label>Source</Label>
+                    <Select value={comparisonSource || "acquisition_gov"} onValueChange={(val) => setComparisonSource(val)}>
+                      <SelectTrigger className="w-48" data-testid="comparison-source">
+                        <SelectValue placeholder="acquisition.gov" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="acquisition_gov">acquisition.gov (Live)</SelectItem>
+                        <SelectItem value="local_db">Local Database</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
                   <div>
                     <Label>Clause Type Filter</Label>
                     <Select value={comparisonClauseType || "all"} onValueChange={(val) => setComparisonClauseType(val === "all" ? "" : val)}>
