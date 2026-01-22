@@ -339,7 +339,8 @@ export default function AgiloftIntegration({ user }) {
     setSelectedMissingClauses([]);
 
     try {
-      const response = await fetch(`${API}/agiloft/compare-clauses`, {
+      // Use the new comparison endpoint
+      const response = await fetch(`${API}/comparison/compare`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -360,7 +361,6 @@ export default function AgiloftIntegration({ user }) {
       setComparisonResult(result);
       
       if (result.success) {
-        const sourceName = comparisonSource === "acquisition_gov" ? "acquisition.gov" : "local database";
         toast.success(`Comparison complete! ${result.matched_count} clauses matched, ${result.missing_in_agiloft_count} missing in Agiloft`);
       } else {
         toast.error(result.message || "Comparison failed");
