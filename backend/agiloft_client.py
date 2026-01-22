@@ -214,13 +214,22 @@ class AgiloftClient:
             
             if response.status_code == 200:
                 data = response.json()
+                
+                # Log the first few responses to see the structure
+                if clause_id <= 5:
+                    logger.info(f"Clause {clause_id} raw response: {str(data)[:500]}")
+                
                 if data.get("success") and data.get("result"):
                     result = data["result"]
                     # Extract from DAO wrapper if present
                     if isinstance(result, dict):
                         dao_key = next((k for k in result.keys() if k.startswith("DAO")), None)
                         if dao_key and isinstance(result[dao_key], dict):
-                            return result[dao_key]
+                            clause_data = result[dao_key]
+                            if clause_id <= 5:
+                                logger.info(f"Clause {clause_id} extracted fields: {list(clause_data.keys())}")
+                                logger.info(f"Clause {clause_id} clause_number: {clause_data.get('clause_number', 'N/A')}")
+                            return clause_data
                         return result
                     return result
         except Exception as e:
