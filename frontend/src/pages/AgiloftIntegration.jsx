@@ -86,19 +86,18 @@ export default function AgiloftIntegration({ user }) {
         body: JSON.stringify(config)
       });
 
-      // Clone the response before reading to prevent "body stream already read" error
-      const responseClone = response.clone();
-      
       let result;
-      try {
+      const contentType = response.headers.get("content-type");
+      
+      if (contentType && contentType.includes("application/json")) {
         result = await response.json();
-      } catch (parseError) {
-        // If JSON parsing fails, try to get text
-        const text = await responseClone.text();
+      } else {
+        // Non-JSON response (e.g., Cloudflare error page)
+        const text = await response.text();
         result = { 
           success: false, 
-          message: text || `HTTP Error ${response.status}`,
-          detail: text
+          message: `Server error (${response.status}): ${text.substring(0, 200)}`,
+          detail: text.substring(0, 500)
         };
       }
       
@@ -119,8 +118,9 @@ export default function AgiloftIntegration({ user }) {
       }
     } catch (error) {
       console.error("Agiloft connection error:", error);
-      setConnectionStatus({ success: false, message: `Connection error: ${error.message}` });
-      toast.error(`Connection test failed: ${error.message}`);
+      const errorMsg = error.message || "Unknown error";
+      setConnectionStatus({ success: false, message: `Connection error: ${errorMsg}` });
+      toast.error(`Connection test failed: ${errorMsg}`);
     } finally {
       setTesting(false);
     }
