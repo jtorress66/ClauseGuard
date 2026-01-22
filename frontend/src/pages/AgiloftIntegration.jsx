@@ -388,27 +388,28 @@ export default function AgiloftIntegration({ user }) {
     setUploading(true);
 
     try {
-      // Use the new upload endpoint
-      const response = await fetch(`${API}/comparison/upload`, {
+      // Use the original upload endpoint
+      const response = await fetch(`${API}/agiloft/upload-missing-clauses`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
           config,
           clause_numbers: selectedMissingClauses,
-          fetch_text: fetchFresh
+          fetch_fresh: fetchFresh
         })
       });
 
-      const result = await response.json();
-      
       if (!response.ok) {
-        toast.error(result.detail || "Upload failed");
+        const errorData = await response.json().catch(() => ({}));
+        toast.error(errorData.detail || "Upload failed");
         return;
       }
       
-      if (result.success || result.uploaded_count > 0) {
-        toast.success(`Uploaded ${result.uploaded_count} of ${result.total_requested} clauses`);
+      const result = await response.json();
+      
+      if (result.success || result.uploaded > 0) {
+        toast.success(`Uploaded ${result.uploaded} of ${result.total_requested} clauses`);
         // Refresh comparison after upload
         compareClausesWithAgiloft();
       } else {
