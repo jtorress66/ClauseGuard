@@ -39,11 +39,24 @@ class AgiloftClient:
     def _build_base_url(self) -> str:
         """Build the base REST API URL."""
         kb_url = self.config.kb_url.rstrip('/')
-        # Remove /ui if present
-        if kb_url.endswith('/ui'):
-            kb_url = kb_url[:-3]
+        
+        # Remove common trailing paths that users might accidentally include
+        paths_to_remove = ['/ui', '/ewws', '/ewws/login', '/ewws/alrest', '/login']
+        for path in paths_to_remove:
+            if kb_url.lower().endswith(path.lower()):
+                kb_url = kb_url[:-len(path)]
+        
+        # Also remove any path with /ewws in it
+        if '/ewws' in kb_url:
+            idx = kb_url.find('/ewws')
+            kb_url = kb_url[:idx]
+        
+        kb_url = kb_url.rstrip('/')
+        
         # Build REST API path
-        return f"{kb_url}/ewws/alrest/{self.config.kb_name}"
+        base = f"{kb_url}/ewws/alrest/{self.config.kb_name}"
+        logger.info(f"Built Agiloft base URL: {base}")
+        return base
     
     async def login(self) -> bool:
         """
