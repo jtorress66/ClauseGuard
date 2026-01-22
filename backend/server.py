@@ -2344,8 +2344,10 @@ async def compare_clauses_with_agiloft(comparison_request: ClauseComparisonReque
             agiloft_raw_response = None
             
             try:
+                # IMPORTANT: Add lang parameter as query string - required by Agiloft API
                 search_resp = await client.post(
                     search_url,
+                    params={"lang": "en"},
                     json=search_payload,
                     headers=auth_headers
                 )
