@@ -191,7 +191,15 @@ export default function SearchResults() {
               className={`h-12 rounded-xl px-5 ${useAI 
                 ? "bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 shadow-md shadow-purple-200" 
                 : "border-slate-200 hover:bg-slate-50"}`}
-              onClick={() => setUseAI(!useAI)}
+              onClick={() => {
+                // Toggle AI mode and immediately trigger search if there's a query
+                const newAiState = !useAI;
+                setUseAI(newAiState);
+                if (query.trim()) {
+                  // Update URL params and trigger search
+                  setSearchParams({ q: query, type: clauseType, ai: newAiState.toString() });
+                }
+              }}
               data-testid="ai-toggle"
             >
               <Sparkles className={`w-4 h-4 mr-2 ${useAI ? "" : "text-purple-500"}`} />
