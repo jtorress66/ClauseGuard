@@ -112,86 +112,112 @@ class AgiloftClient:
                              top: int = 5000) -> List[Dict]:
         """
         Search Clause Library and return all clauses.
-        
-        Args:
-            select_fields: Fields to return (default: clause_number, clause_title, clause_type)
-            top: Maximum records to return
-        
-        Returns:
-            List of clause records
+        Uses multiple strategies to try to get clause_number field.
         """
         if not self.token:
             if not await self.login():
                 raise Exception("Failed to authenticate with Agiloft")
         
-        url = f"{self.base_url}/clause/search"
-        
-        # Default fields based on OpenAPI spec
-        if select_fields is None:
-            select_fields = ["id", "clause_number", "clause_title", "clause_type", "clause_text"]
-        
-        # Try different query formats - Agiloft API can be finicky
-        # Format 1: Standard $select
-        payload = {
-            "$select": ",".join(select_fields),
-            "$top": top
-        }
-        
-        logger.info(f"Searching Agiloft clauses: {url}")
-        logger.info(f"Payload: {payload}")
+        clauses = []
         
         async with httpx.AsyncClient(timeout=120.0) as client:
-            try:
-                # First try with $select in body
-                response = await client.post(
-                    url,
-                    params={"lang": "en"},
-                    json=payload,
-                    headers=self._get_auth_headers()
-                )
+            # Strategy 1: Try search with explicit fields
+            url = f"{self.base_url}/clause/search"
+            
+            # Try different payload formats
+            payloads_to_try = [
+                # Format 1: Fields in $select (standard OData)
+                {"$select": "id,clause_number,clause_title,clause_type", "$top": top},
+                # Format 2: select without $ prefix
+                {"select": "id,clause_number,clause_title,clause_type", "top": top},
+                # Format 3: Query parameter style
+                {},
+            ]
+            
+            for i, payload in enumerate(payloads_to_try):
+                logger.info(f"Trying search payload format {i+1}: {payload}")
                 
-                logger.info(f"Search response status: {response.status_code}")
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    logger.info(f"Search response keys: {list(data.keys()) if isinstance(data, dict) else 'list'}")
+                try:
+                    if payload:
+                        response = await client.post(
+                            url,
+                            params={"lang": "en"},
+                            json=payload,
+                            headers=self._get_auth_headers()
+                        )
+                    else:
+                        # Try GET with query params
+                        response = await client.get(
+                            f"{self.base_url}/clause",
+                            params={"lang": "en", "$top": str(top), "$select": "id,clause_number,clause_title"},
+                            headers=self._get_auth_headers()
+                        )
                     
-                    # Log raw response for first result
-                    if isinstance(data, dict) and "result" in data:
-                        result = data["result"]
-                        if isinstance(result, list) and len(result) > 0:
-                            logger.info(f"RAW first result: {str(result[0])[:1000]}")
-                    
-                    # Handle Agiloft's response format
-                    clauses = self._extract_records(data)
-                    logger.info(f"Extracted {len(clauses)} clause records")
-                    
-                    # Log sample to see field structure
-                    if clauses:
-                        sample = clauses[0]
-                        logger.info(f"Sample clause ALL fields: {list(sample.keys())}")
-                        for key, val in sample.items():
-                            logger.info(f"  {key}: {str(val)[:100]}")
+                    if response.status_code == 200:
+                        data = response.json()
+                        records = self._extract_records(data)
                         
-                        # Check if clause_number is present
-                        if not sample.get("clause_number"):
-                            logger.warning("clause_number field is empty - trying to find alternative fields")
+                        if records:
+                            sample = records[0]
+                            logger.info(f"Format {i+1} returned fields: {list(sample.keys())}")
                             
-                            # Look for any field that might contain clause number
-                            for key, val in sample.items():
-                                if val and isinstance(val, str):
-                                    from acqgov_scraper import SECTION_RE
-                                    if SECTION_RE.search(str(val)):
-                                        logger.info(f"Found clause number pattern in field '{key}': {val[:100]}")
+                            # Check if we got clause_number
+                            if sample.get("clause_number"):
+                                logger.info(f"SUCCESS! Format {i+1} returned clause_number: {sample.get('clause_number')}")
+                                return records
+                            else:
+                                logger.info(f"Format {i+1} did not return clause_number field")
+                                clauses = records  # Save for later
+                except Exception as e:
+                    logger.warning(f"Format {i+1} failed: {e}")
+            
+            # Strategy 2: If search doesn't return clause_number, try fetching individual records
+            if clauses and not clauses[0].get("clause_number"):
+                logger.info("Search did not return clause_number. Trying individual record fetch...")
+                
+                enriched = []
+                for i, clause in enumerate(clauses):
+                    clause_id = clause.get("id")
+                    if clause_id:
+                        # Fetch individual record
+                        record_url = f"{self.base_url}/clause/{clause_id}"
+                        try:
+                            resp = await client.get(
+                                record_url,
+                                params={"lang": "en"},
+                                headers=self._get_auth_headers()
+                            )
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                if data.get("success") and data.get("result"):
+                                    result = data["result"]
+                                    # Extract from DAO wrapper
+                                    dao_key = next((k for k in result.keys() if k.startswith("DAO")), None)
+                                    if dao_key and isinstance(result[dao_key], dict):
+                                        record = result[dao_key]
+                                        if i < 3:
+                                            logger.info(f"Individual record {clause_id} fields: {list(record.keys())}")
+                                            logger.info(f"clause_number value: {record.get('clause_number', 'N/A')}")
+                                        enriched.append(record)
+                                        continue
+                        except Exception as e:
+                            if i < 3:
+                                logger.debug(f"Error fetching record {clause_id}: {e}")
+                    enriched.append(clause)
                     
-                    return clauses
-                else:
-                    logger.error(f"Search failed: {response.status_code} - {response.text[:500]}")
-                    return []
+                    # Rate limit and progress
+                    if (i + 1) % 50 == 0:
+                        logger.info(f"Fetched {i+1}/{len(clauses)} individual records")
+                        await asyncio.sleep(0.1)
                     
-            except Exception as e:
-                logger.error(f"Search error: {e}")
-                return []
+                    # Stop early if individual fetch also doesn't return clause_number
+                    if i == 5 and enriched and not enriched[-1].get("clause_number"):
+                        logger.warning("Individual record fetch also not returning clause_number - stopping early")
+                        return clauses
+                
+                return enriched if enriched else clauses
+            
+            return clauses
     
     async def _get_clause_by_id(self, client: httpx.AsyncClient, clause_id: int) -> Optional[Dict]:
         """Fetch a single clause by ID to get full field data."""
