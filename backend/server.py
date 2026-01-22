@@ -3049,6 +3049,14 @@ async def export_flowdown_report(report_request: FlowdownReportRequest, request:
 
 # ==================== Include Routers ====================
 
+# Import the new comparison routes module
+try:
+    from comparison_routes import comparison_router
+    app.include_router(comparison_router)
+    logger.info("Comparison routes loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load comparison_routes: {e}")
+
 app.include_router(api_router)
 app.include_router(auth_router)
 app.include_router(clauses_router)
