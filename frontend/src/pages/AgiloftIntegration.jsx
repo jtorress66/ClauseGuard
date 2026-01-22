@@ -327,7 +327,7 @@ export default function AgiloftIntegration({ user }) {
     }
   };
 
-  // Compare clauses between local DB and Agiloft
+  // Compare clauses between source (acquisition.gov or local DB) and Agiloft
   const compareClausesWithAgiloft = async () => {
     if (!connectionStatus?.success) {
       toast.error("Please test connection first");
@@ -345,7 +345,8 @@ export default function AgiloftIntegration({ user }) {
         credentials: "include",
         body: JSON.stringify({
           config,
-          clause_type: comparisonClauseType || null
+          clause_type: comparisonClauseType || null,
+          source: comparisonSource || "acquisition_gov"
         })
       });
 
@@ -359,7 +360,8 @@ export default function AgiloftIntegration({ user }) {
       setComparisonResult(result);
       
       if (result.success) {
-        toast.success(`Comparison complete! Found ${result.missing_in_agiloft_count} clauses missing in Agiloft`);
+        const sourceName = comparisonSource === "acquisition_gov" ? "acquisition.gov" : "local database";
+        toast.success(`Comparison complete! ${result.matched_count} clauses matched, ${result.missing_in_agiloft_count} missing in Agiloft`);
       } else {
         toast.error(result.message || "Comparison failed");
       }
