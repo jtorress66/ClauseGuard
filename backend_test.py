@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 
 class FederalClauseAPITester:
-    def __init__(self, base_url="https://fccm-manager.preview.emergentagent.com"):
+    def __init__(self, base_url="https://clauseguard.preview.emergentagent.com"):
         self.base_url = base_url
         self.session_token = None
         self.user_id = None

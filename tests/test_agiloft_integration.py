@@ -19,7 +19,7 @@ import os
 # Get BASE_URL from environment
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 if not BASE_URL:
-    BASE_URL = "https://fccm-manager.preview.emergentagent.com"
+    BASE_URL = "https://clauseguard.preview.emergentagent.com"
 
 # Test session token
 SESSION_TOKEN = "test_session_regression_1768429393344"
