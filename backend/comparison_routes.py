@@ -143,7 +143,7 @@ async def search_agiloft_clauses(request: Request, config: AgiloftConfig):
 
 
 @comparison_router.post("/compare")
-async def compare_clauses(request: Request, compare_request: CompareRequest):
+async def compare_clauses(compare_request: CompareRequest):
     """
     POST /api/comparison/compare
     
@@ -156,18 +156,37 @@ async def compare_clauses(request: Request, compare_request: CompareRequest):
     - missing_in_agiloft: clauses in acquisition.gov but not in Agiloft
     - missing_in_acqgov: clauses in Agiloft but not in acquisition.gov
     """
+    global _clause_cache
+    
     try:
-        # Step 1: Get acquisition.gov clauses
+        # Step 1: Get acquisition.gov clauses from cache or scrape
         logger.info(f"Starting comparison, clause_type={compare_request.clause_type}")
         
-        acqgov_response = await get_acqgov_clauses(
-            request, 
-            clause_type=compare_request.clause_type,
-            refresh=False
-        )
-        acqgov_clauses = acqgov_response.get("clauses", [])
+        # Check if we need to refresh cache
+        clause_type = compare_request.clause_type
         
-        logger.info(f"Got {len(acqgov_clauses)} clauses from acquisition.gov")
+        if clause_type is None or clause_type.upper() == "FAR":
+            if not _clause_cache.get("FAR"):
+                logger.info("Refreshing FAR clause cache from acquisition.gov...")
+                far_clauses = await scrape_far_clauses()
+                _clause_cache["FAR"] = far_clauses
+                logger.info(f"Cached {len(far_clauses)} FAR clauses")
+        
+        if clause_type is None or clause_type.upper() == "DFARS":
+            if not _clause_cache.get("DFARS"):
+                logger.info("Refreshing DFARS clause cache from acquisition.gov...")
+                dfars_clauses = await scrape_dfars_clauses()
+                _clause_cache["DFARS"] = dfars_clauses
+                logger.info(f"Cached {len(dfars_clauses)} DFARS clauses")
+        
+        # Collect clauses based on filter
+        acqgov_clauses = []
+        if clause_type is None or clause_type.upper() == "FAR":
+            acqgov_clauses.extend(_clause_cache.get("FAR", []))
+        if clause_type is None or clause_type.upper() == "DFARS":
+            acqgov_clauses.extend(_clause_cache.get("DFARS", []))
+        
+        logger.info(f"Got {len(acqgov_clauses)} clauses from acquisition.gov cache")
         
         # Build normalized set of acquisition.gov clause numbers
         acqgov_map = {}  # normalized_number -> clause
