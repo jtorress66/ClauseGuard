@@ -308,7 +308,7 @@ async def compare_clauses(compare_request: CompareRequest):
 
 
 @comparison_router.post("/upload")
-async def upload_clauses(request: Request, upload_request: UploadRequest):
+async def upload_clauses(upload_request: UploadRequest):
     """
     POST /api/comparison/upload
     
@@ -322,12 +322,17 @@ async def upload_clauses(request: Request, upload_request: UploadRequest):
     Returns:
     - results: Per-clause upload status
     """
+    global _clause_cache
+    
     try:
         # Get clause data from cache
-        acqgov_response = await get_acqgov_clauses(request, refresh=False)
+        all_clauses = []
+        all_clauses.extend(_clause_cache.get("FAR", []))
+        all_clauses.extend(_clause_cache.get("DFARS", []))
+        
         acqgov_clauses = {
             normalize_clause_id(c.get("clause_number", "")): c 
-            for c in acqgov_response.get("clauses", [])
+            for c in all_clauses
         }
         
         # Initialize Agiloft client
