@@ -202,33 +202,22 @@ async def compare_clauses(compare_request: CompareRequest):
         sample_acqgov = list(acqgov_numbers)[:5]
         logger.info(f"Sample acquisition.gov numbers: {sample_acqgov}")
         
-        # Step 2: Get Agiloft clauses
+        # Step 2: Get Agiloft clause numbers using REST API
         client = AgiloftClient(compare_request.config)
         
         if not await client.login():
             raise HTTPException(status_code=401, detail="Agiloft authentication failed")
         
-        agiloft_clauses = await client.search_clauses()
-        logger.info(f"Got {len(agiloft_clauses)} clauses from Agiloft")
+        # Get clause numbers from Agiloft using the correct API format
+        agiloft_clause_numbers_raw = await client.get_clause_numbers()
+        logger.info(f"Got {len(agiloft_clause_numbers_raw)} clause numbers from Agiloft")
         
-        # Build normalized set of Agiloft clause numbers
-        agiloft_map = {}  # normalized_number -> clause
-        for clause in agiloft_clauses:
-            # Try clause_number field
-            clause_num = clause.get("clause_number", "")
-            
-            # If empty, try extracting from clause_title
-            if not clause_num:
-                from acqgov_scraper import SECTION_RE
-                title = clause.get("clause_title", "") or ""
-                m = SECTION_RE.search(title)
-                if m:
-                    clause_num = m.group(1)
-            
-            if clause_num:
-                normalized = normalize_clause_id(clause_num)
-                if normalized:
-                    agiloft_map[normalized] = clause
+        # Normalize Agiloft clause numbers for comparison
+        agiloft_map = {}  # normalized_number -> original_number
+        for clause_num in agiloft_clause_numbers_raw:
+            normalized = normalize_clause_id(clause_num)
+            if normalized:
+                agiloft_map[normalized] = clause_num
         
         agiloft_numbers = set(agiloft_map.keys())
         logger.info(f"Unique normalized Agiloft clause numbers: {len(agiloft_numbers)}")
