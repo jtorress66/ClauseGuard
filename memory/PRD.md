@@ -38,6 +38,10 @@ Build a Federal Clause Management app that helps government contractors manage F
   - Identify correct/missing/needs-update clauses
   - Check flowdown requirements
   - Update contracts with compliance flags
+- [x] **Clause Comparison**: Compare FAR/DFARS clauses between local DB and Agiloft KB
+  - Identify clauses missing in Agiloft
+  - Upload missing clauses from acquisition.gov to Agiloft
+  - View matched clauses and clauses only in Agiloft
 
 ### Export & Reporting
 - [x] Batch export (PDF, JSON, CSV)
@@ -45,14 +49,15 @@ Build a Federal Clause Management app that helps government contractors manage F
 - [x] Include/exclude full text and flowdown info
 
 ### Authentication
-- [x] Google OAuth via Emergent Auth
+- [x] Custom email/password authentication with JWT
+- [x] User registration with validation
 - [x] Protected routes for all sensitive features
 
 ## API Endpoints
 
 ### Clauses
 - `GET /api/clauses/search` - Search clauses
-- `GET /api/clauses/ai-search` - AI-powered search
+- `GET /api/clauses/ai-search` - AI-powered search (requires auth)
 - `GET /api/clauses/fetch-live/{number}` - Fetch from acquisition.gov
 - `POST /api/clauses/sync-from-acquisition-gov` - Sync FAR index
 
@@ -67,6 +72,8 @@ Build a Federal Clause Management app that helps government contractors manage F
 ### Agiloft Integration
 - `POST /api/agiloft/test-connection` - Test Agiloft connection
 - `POST /api/agiloft/push-clauses` - Push clauses TO Agiloft
+- `POST /api/agiloft/compare-clauses` - Compare local clauses with Agiloft KB
+- `POST /api/agiloft/upload-missing-clauses` - Upload missing clauses to Agiloft
 - `POST /api/agiloft/contracts` - Get Agiloft contracts
 - `POST /api/agiloft/analyze-contract` - Analyze contract compliance
 - `POST /api/agiloft/update-contract` - Update contract in Agiloft
@@ -80,19 +87,24 @@ Build a Federal Clause Management app that helps government contractors manage F
 - **Backend**: FastAPI (Python)
 - **Database**: MongoDB
 - **AI**: OpenAI GPT-5.2 via Emergent LLM Key
-- **Auth**: Emergent-managed Google OAuth
+- **Auth**: Custom JWT-based email/password
 - **External**: acquisition.gov, Agiloft REST API
 
 ## Next Tasks (P1)
+1. Real-time notifications for clause tracking changes
+2. Enhanced UI for Agiloft field mapping configuration
+
+## Future/Backlog Tasks (P2)
 1. Add scheduled sync jobs for Agiloft
 2. Email notifications for clause changes
 3. Bulk clause update from acquisition.gov
-4. Enhanced Agiloft field mapping configuration ✅
+4. Enhanced semantic matching for AI search
 
 ## Notes
 - Agiloft integration now properly validates credentials (no longer returns success with invalid passwords)
 - All protected routes require authentication
 - AI features require Emergent LLM key (already configured)
+- AI Search ONLY uses indexed acquisition.gov data - never fabricates clauses
 
 ## Agiloft API Configuration
 - **Instance URL format**: `https://yourinstance.agiloft.com` (without "saas" subdomain)
@@ -111,6 +123,7 @@ Build a Federal Clause Management app that helps government contractors manage F
   - By Contract Title, Company Name, Type (client-side filtering)
 
 ## Change Log
+- **2025-01-22**: Fixed AI Search button not returning results - button now triggers search when toggled. Added Clause Comparison feature to compare FAR/DFARS clauses between local DB and Agiloft KB with ability to upload missing clauses. Fixed SelectItem empty value bug in Agiloft Integration page. All bugs reported by user verified fixed.
 - **2025-01-21**: Updated AI search to ONLY use indexed acquisition.gov data - no fabricated clauses. Added source indicator showing "acquisition.gov". Fixed summary NoneType bug. UI now clearly shows data is from authoritative source.
 - **2025-01-21**: Changed authentication from Google OAuth to email/password with registration. Updated entire UI to modern SaaS-style design with soft gradients, modern cards, teal color palette, and enhanced typography. All 12 auth tests passed.
 - **2025-01-15**: Fixed contract data mapping - now properly extracts title, type, company from Agiloft's nested DAO structure. Added search/filter functionality for contracts (by ID, title, company, type).
