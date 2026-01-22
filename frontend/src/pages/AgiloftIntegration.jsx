@@ -639,8 +639,8 @@ export default function AgiloftIntegration({ user }) {
                     {/* Summary Stats */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <div className="text-center p-4 bg-blue-50 rounded-lg border border-blue-100">
-                        <div className="text-2xl font-bold text-blue-600">{comparisonResult.total_local_clauses}</div>
-                        <div className="text-xs text-slate-500">Local DB Clauses</div>
+                        <div className="text-2xl font-bold text-blue-600">{comparisonResult.total_source_clauses || comparisonResult.total_local_clauses}</div>
+                        <div className="text-xs text-slate-500">{comparisonResult.source || "Source"} Clauses</div>
                       </div>
                       <div className="text-center p-4 bg-purple-50 rounded-lg border border-purple-100">
                         <div className="text-2xl font-bold text-purple-600">{comparisonResult.total_agiloft_clauses}</div>
