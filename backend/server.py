@@ -2433,13 +2433,18 @@ async def compare_clauses_with_agiloft(comparison_request: ClauseComparisonReque
     2. Clauses in Agiloft but not in acquisition.gov index  
     3. Matched clauses present in both
     
-    Uses normalized clause numbers for accurate comparison.
+    Uses the new AgiloftClient with the correct API format:
+    POST /clause/search with body {"search": "", "field": ["clause_number"], "query": ""}
     """
     user = await require_auth(request)
     
     config = comparison_request.config
     
-    # Step 1: Get source clauses (acquisition.gov index or local DB)
+    # Check if new modules are available
+    if not AGILOFT_CLIENT_AVAILABLE:
+        raise HTTPException(status_code=500, detail="Agiloft client module not available")
+    
+    # Step 1: Get source clauses (acquisition.gov or local DB)
     source_clauses = []
     source_name = "acquisition.gov"
     
@@ -2450,19 +2455,24 @@ async def compare_clauses_with_agiloft(comparison_request: ClauseComparisonReque
             local_filter["type"] = comparison_request.clause_type
         source_clauses = await db.clauses.find(local_filter, {"_id": 0}).to_list(1000)
         source_name = "local database"
+        
+        # Convert to expected format
+        for clause in source_clauses:
+            if "number" in clause and "clause_number" not in clause:
+                clause["clause_number"] = clause["number"]
     else:
-        # Fetch from acquisition.gov - get both FAR and DFARS indexes
-        logger.info("Fetching clause index from acquisition.gov...")
+        # Fetch from acquisition.gov using the new scraper module
+        logger.info("Fetching clause index from acquisition.gov using new scraper...")
         
         # Fetch FAR clauses (Part 52)
         if not comparison_request.clause_type or comparison_request.clause_type == "FAR":
-            far_clauses = await fetch_far_index()
+            far_clauses = await scrape_far_clauses()
             logger.info(f"Fetched {len(far_clauses)} FAR clauses from acquisition.gov")
             source_clauses.extend(far_clauses)
         
         # Fetch DFARS clauses (Part 252)
         if not comparison_request.clause_type or comparison_request.clause_type == "DFARS":
-            dfars_clauses = await fetch_dfars_index()
+            dfars_clauses = await scrape_dfars_clauses()
             logger.info(f"Fetched {len(dfars_clauses)} DFARS clauses from acquisition.gov")
             source_clauses.extend(dfars_clauses)
         
@@ -2473,8 +2483,9 @@ async def compare_clauses_with_agiloft(comparison_request: ClauseComparisonReque
     source_original_numbers = {}  # normalized_number -> original_number
     
     for clause in source_clauses:
-        original_num = clause.get("number", "")
-        normalized = normalize_clause_number(original_num)
+        # Use clause_number field from new scraper format
+        original_num = clause.get("clause_number", clause.get("number", ""))
+        normalized = normalize_clause_id(original_num)
         if normalized:
             source_clause_map[normalized] = clause
             source_original_numbers[normalized] = original_num
@@ -2487,228 +2498,117 @@ async def compare_clauses_with_agiloft(comparison_request: ClauseComparisonReque
         logger.info(f"Sample source clause numbers: {sample}")
     
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            # Login to Agiloft
-            login_data = await agiloft_login(client, config)
-            token = login_data.get("access_token")
+        # Create new AgiloftClient with the correct API format
+        agiloft_config = NewAgiloftConfig(
+            kb_url=config.kb_url,
+            kb_name=config.kb_name,
+            username=config.username,
+            password=config.password
+        )
+        agiloft_client = AgiloftClient(agiloft_config)
+        
+        # Login to Agiloft
+        if not await agiloft_client.login():
+            raise HTTPException(status_code=401, detail="Failed to authenticate with Agiloft")
+        
+        logger.info("Agiloft login successful")
+        
+        # Get clause numbers using the correct API format:
+        # POST /clause/search with body {"search": "", "field": ["clause_number"], "query": ""}
+        agiloft_clause_numbers_raw = await agiloft_client.get_clause_numbers()
+        logger.info(f"Got {len(agiloft_clause_numbers_raw)} clause numbers from Agiloft")
+        
+        # Sample for debugging
+        sample_agiloft_raw = list(agiloft_clause_numbers_raw)[:10]
+        logger.info(f"Sample raw Agiloft clause numbers: {sample_agiloft_raw}")
+        
+        # Normalize Agiloft clause numbers for comparison
+        agiloft_clause_map = {}  # normalized_number -> original_number
+        for clause_num in agiloft_clause_numbers_raw:
+            normalized = normalize_clause_id(clause_num)
+            if normalized:
+                agiloft_clause_map[normalized] = clause_num
+        
+        agiloft_clause_numbers = set(agiloft_clause_map.keys())
+        logger.info(f"Normalized Agiloft clause numbers: {len(agiloft_clause_numbers)}")
+        
+        # Compare using normalized numbers
+        matched_numbers = source_clause_numbers.intersection(agiloft_clause_numbers)
+        missing_in_agiloft_numbers = source_clause_numbers - agiloft_clause_numbers
+        missing_in_source_numbers = agiloft_clause_numbers - source_clause_numbers
+        
+        logger.info(f"Matched: {len(matched_numbers)}, Missing in Agiloft: {len(missing_in_agiloft_numbers)}, Missing in source: {len(missing_in_source_numbers)}")
+        
+        # Build result lists
+        missing_in_agiloft = []
+        for normalized_num in sorted(missing_in_agiloft_numbers):
+            clause = source_clause_map.get(normalized_num, {})
+            original_num = source_original_numbers.get(normalized_num, normalized_num)
+            missing_in_agiloft.append({
+                "number": original_num,
+                "normalized": normalized_num,
+                "title": clause.get("title", ""),
+                "type": clause.get("type", ""),
+                "flowdown_required": clause.get("flowdown_required", False),
+                "source": source_name
+            })
+        
+        missing_in_source = []
+        for normalized_num in sorted(missing_in_source_numbers):
+            original_num = agiloft_clause_map.get(normalized_num, normalized_num)
+            missing_in_source.append({
+                "agiloft_id": None,
+                "clause_number": original_num,
+                "normalized": normalized_num,
+                "clause_title": "",
+                "note": "In Agiloft but not in acquisition.gov index"
+            })
+        
+        matched_clauses = []
+        for normalized_num in sorted(matched_numbers):
+            source_clause = source_clause_map.get(normalized_num, {})
+            source_original = source_original_numbers.get(normalized_num, normalized_num)
+            agiloft_original = agiloft_clause_map.get(normalized_num, "")
             
-            if not token:
-                raise HTTPException(status_code=401, detail="Failed to authenticate with Agiloft")
-            
-            auth_headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {token}"
+            matched_clauses.append({
+                "number": source_original,
+                "normalized": normalized_num,
+                "source_title": source_clause.get("title", ""),
+                "agiloft_number": agiloft_original,
+                "type": source_clause.get("type", "")
+            })
+        
+        return {
+            "success": True,
+            "source": source_name,
+            "total_source_clauses": len(source_clauses),
+            "total_agiloft_clauses": len(agiloft_clause_numbers_raw),
+            "missing_in_agiloft": missing_in_agiloft,
+            "missing_in_agiloft_count": len(missing_in_agiloft),
+            "missing_in_source": missing_in_source,
+            "missing_in_source_count": len(missing_in_source),
+            # Keep old key names for frontend compatibility
+            "missing_in_local": missing_in_source,
+            "missing_in_local_count": len(missing_in_source),
+            "matched_clauses": matched_clauses,
+            "matched_count": len(matched_clauses),
+            "debug": {
+                "source_normalized_count": len(source_clause_numbers),
+                "agiloft_normalized_count": len(agiloft_clause_numbers),
+                "agiloft_raw_count": len(agiloft_clause_numbers_raw),
+                "sample_source_numbers": list(source_clause_numbers)[:5],
+                "sample_agiloft_numbers": list(agiloft_clause_numbers)[:5],
+                "sample_agiloft_raw": sample_agiloft_raw,
+                "normalization_note": "Using new AgiloftClient with POST /clause/search and field: ['clause_number']"
             }
-            
-            # Search for all clauses in Agiloft
-            # Based on user's reference code, the table is "clause_library" or "clause"
-            # and field names could be "Part Number" or "clause_number"
-            # The API table name might be 'clause_library' or 'clause'
-            # The clause number field might be 'clause_number', 'Clause_Number', etc.
-            
-            agiloft_clauses = []
-            table_names_to_try = ["clause"]  # Based on OpenAPI spec, table is 'clause'
-            actual_table_name = None
-            
-            for table_name in table_names_to_try:
-                # Search for records with specific fields
-                search_url = _build_agiloft_url(config.kb_url, config.kb_name, f"{table_name}/search")
-                
-                # According to OpenAPI spec, the exact field names are:
-                # - clause_number (VARCHAR)
-                # - clause_title (VARCHAR)  
-                # - clause_text (LONG VARCHAR)
-                # Use proper OData-style $select format
-                search_payload = {
-                    "$select": "id,clause_number,clause_title,clause_text,clause_type",
-                    "$top": 5000
-                }
-                
-                logger.info(f"Trying Agiloft table '{table_name}': {search_url}")
-                logger.info(f"Search payload: {search_payload}")
-                
-                try:
-                    search_resp = await client.post(
-                        search_url,
-                        params={"lang": "en"},
-                        json=search_payload,
-                        headers=auth_headers
-                    )
-                    
-                    logger.info(f"Table '{table_name}' response status: {search_resp.status_code}")
-                    logger.info(f"Response text (first 500 chars): {search_resp.text[:500]}")
-                    
-                    if search_resp.status_code == 200:
-                        search_data = search_resp.json()
-                        
-                        # Log raw response structure for debugging
-                        if isinstance(search_data, dict):
-                            logger.info(f"Response keys for '{table_name}': {list(search_data.keys())}")
-                        
-                        # Handle Agiloft's nested response format
-                        temp_clauses = []
-                        if isinstance(search_data, dict):
-                            if "result" in search_data:
-                                result = search_data["result"]
-                                if isinstance(result, list):
-                                    temp_clauses = result
-                                elif isinstance(result, dict) and "value" in result:
-                                    temp_clauses = result["value"]
-                                elif isinstance(result, dict):
-                                    temp_clauses = [result] if result else []
-                            elif "value" in search_data:
-                                temp_clauses = search_data["value"]
-                            elif "records" in search_data:
-                                temp_clauses = search_data["records"]
-                        elif isinstance(search_data, list):
-                            temp_clauses = search_data
-                        
-                        # Extract DAO objects if present
-                        extracted_clauses = []
-                        for item in temp_clauses:
-                            if isinstance(item, dict):
-                                dao_key = next((k for k in item.keys() if k.startswith("DAO")), None)
-                                if dao_key and isinstance(item[dao_key], dict):
-                                    clause_data = item[dao_key].copy()
-                                    if "id" not in clause_data and "id" in item:
-                                        clause_data["id"] = item["id"]
-                                    extracted_clauses.append(clause_data)
-                                else:
-                                    extracted_clauses.append(item)
-                        
-                        if extracted_clauses:
-                            agiloft_clauses = extracted_clauses
-                            logger.info(f"SUCCESS: Found {len(agiloft_clauses)} clauses in table '{table_name}'")
-                            
-                            # Log ALL fields of first record to understand structure
-                            if agiloft_clauses:
-                                sample = agiloft_clauses[0]
-                                logger.info(f"ALL fields in '{table_name}' record: {list(sample.keys())}")
-                                for key, val in list(sample.items())[:20]:
-                                    val_str = str(val)[:80] if val else "None"
-                                    logger.info(f"  Field '{key}': {val_str}")
-                            break  # Found clauses, stop trying tables
-                    else:
-                        logger.warning(f"Table '{table_name}' returned {search_resp.status_code}: {search_resp.text[:200]}")
-                        
-                except Exception as e:
-                    logger.warning(f"Error querying table '{table_name}': {e}")
-            
-            # Build normalized Agiloft clause map
-            # Use the confirmed field name 'clause_number' from OpenAPI spec
-            agiloft_clause_map = {}  # normalized_number -> clause
-            agiloft_original_numbers = {}  # normalized_number -> original value
-            unmatched_agiloft = []  # Clauses that couldn't be normalized
-            
-            for agiloft_clause in agiloft_clauses:
-                # Primary field is 'clause_number' as confirmed by user
-                clause_num = agiloft_clause.get("clause_number", "") or ""
-                
-                # If clause_number is empty, try extracting from clause_title as fallback
-                if not clause_num:
-                    clause_title = agiloft_clause.get("clause_title", "") or ""
-                    # Try to extract clause number from title (e.g., "52.204-17 - Some Title")
-                    extracted = normalize_clause_number(clause_title)
-                    if extracted:
-                        clause_num = extracted
-                
-                normalized = normalize_clause_number(clause_num)
-                
-                if normalized:
-                    agiloft_clause_map[normalized] = agiloft_clause
-                    agiloft_original_numbers[normalized] = clause_num
-                    logger.debug(f"Matched Agiloft clause: {clause_num} -> {normalized}")
-                else:
-                    # Store clauses that don't match our pattern
-                    unmatched_entry = {
-                        "id": agiloft_clause.get("id"),
-                        "clause_number": clause_num[:100] if clause_num else None,
-                        "clause_title": (agiloft_clause.get("clause_title") or "")[:100],
-                    }
-                    unmatched_agiloft.append(unmatched_entry)
-            
-            agiloft_clause_numbers = set(agiloft_clause_map.keys())
-            
-            logger.info(f"Agiloft clauses normalized: {len(agiloft_clause_numbers)}, Unmatched pattern: {len(unmatched_agiloft)}")
-            if agiloft_clause_numbers:
-                logger.info(f"Sample Agiloft normalized numbers: {list(agiloft_clause_numbers)[:10]}")
-            
-            # Compare using normalized numbers
-            missing_in_agiloft = []
-            for normalized_num in source_clause_numbers:
-                if normalized_num not in agiloft_clause_numbers:
-                    clause = source_clause_map[normalized_num]
-                    original_num = source_original_numbers.get(normalized_num, normalized_num)
-                    missing_in_agiloft.append({
-                        "number": original_num,
-                        "normalized": normalized_num,
-                        "title": clause.get("title", ""),
-                        "type": clause.get("type", ""),
-                        "flowdown_required": clause.get("flowdown_required", False),
-                        "source": source_name
-                    })
-            
-            # Find clauses in Agiloft but not in source
-            missing_in_source = []
-            for normalized_num in agiloft_clause_numbers:
-                if normalized_num not in source_clause_numbers:
-                    agiloft_clause = agiloft_clause_map[normalized_num]
-                    original_num = agiloft_original_numbers.get(normalized_num, "")
-                    missing_in_source.append({
-                        "agiloft_id": agiloft_clause.get("id"),
-                        "clause_number": original_num,
-                        "normalized": normalized_num,
-                        "clause_title": agiloft_clause.get("clause_title", "")[:100],
-                        "clause_type0": agiloft_clause.get("clause_type0"),
-                        "clause_usage": agiloft_clause.get("clause_usage")
-                    })
-            
-            # Find matched clauses
-            matched_clauses = []
-            for normalized_num in source_clause_numbers.intersection(agiloft_clause_numbers):
-                source_clause = source_clause_map.get(normalized_num, {})
-                agiloft_clause = agiloft_clause_map.get(normalized_num, {})
-                source_original = source_original_numbers.get(normalized_num, normalized_num)
-                agiloft_original = agiloft_original_numbers.get(normalized_num, "")
-                
-                matched_clauses.append({
-                    "number": source_original,
-                    "normalized": normalized_num,
-                    "source_title": source_clause.get("title", ""),
-                    "agiloft_title": agiloft_clause.get("clause_title", "")[:100],
-                    "agiloft_number": agiloft_original,
-                    "type": source_clause.get("type", "")
-                })
-            
-            return {
-                "success": True,
-                "source": source_name,
-                "total_source_clauses": len(source_clauses),
-                "total_agiloft_clauses": len(agiloft_clauses),
-                "missing_in_agiloft": missing_in_agiloft,
-                "missing_in_agiloft_count": len(missing_in_agiloft),
-                "missing_in_source": missing_in_source,
-                "missing_in_source_count": len(missing_in_source),
-                # Keep old key names for frontend compatibility
-                "missing_in_local": missing_in_source,
-                "missing_in_local_count": len(missing_in_source),
-                "matched_clauses": matched_clauses,
-                "matched_count": len(matched_clauses),
-                "debug": {
-                    "source_normalized_count": len(source_clause_numbers),
-                    "agiloft_normalized_count": len(agiloft_clause_numbers),
-                    "agiloft_unmatched_pattern_count": len(unmatched_agiloft),
-                    "sample_source_numbers": list(source_clause_numbers)[:5],
-                    "sample_agiloft_numbers": list(agiloft_clause_numbers)[:5],
-                    "sample_unmatched": unmatched_agiloft[:3],
-                    "normalization_note": "Clause numbers normalized to format XX.XXX-X for comparison. Using 'clause_number' field from Agiloft."
-                }
-            }
+        }
             
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Clause comparison error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Comparison failed: {str(e)}")
 
 class UploadMissingClausesRequest(BaseModel):
