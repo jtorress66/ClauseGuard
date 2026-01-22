@@ -789,8 +789,14 @@ export default function AgiloftIntegration({ user }) {
                         </div>
                         <div className="max-h-32 overflow-y-auto space-y-1">
                           {comparisonResult.missing_in_local.slice(0, 10).map((clause, idx) => (
-                            <div key={idx} className="text-sm text-blue-700">
-                              {clause.clause_title || clause.agiloft_id}
+                            <div key={idx} className="text-sm text-blue-700 flex items-center gap-2">
+                              <span>{clause.clause_title || clause.agiloft_id}</span>
+                              {clause.normalized && (
+                                <span className="text-xs bg-blue-100 px-1 rounded">{clause.normalized}</span>
+                              )}
+                              {clause.note && (
+                                <span className="text-xs text-blue-500 italic">({clause.note})</span>
+                              )}
                             </div>
                           ))}
                           {comparisonResult.missing_in_local.length > 10 && (
@@ -799,6 +805,28 @@ export default function AgiloftIntegration({ user }) {
                             </div>
                           )}
                         </div>
+                      </div>
+                    )}
+
+                    {/* Debug Info */}
+                    {comparisonResult.debug && (
+                      <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Settings className="w-4 h-4 text-slate-500" />
+                          <span className="font-medium text-slate-700 text-sm">Comparison Debug Info</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 text-xs">
+                          <div>
+                            <p className="text-slate-500">Local normalized: {comparisonResult.debug.local_normalized_count}</p>
+                            <p className="text-slate-500">Agiloft normalized: {comparisonResult.debug.agiloft_normalized_count}</p>
+                            <p className="text-slate-500">Unmatched pattern: {comparisonResult.debug.agiloft_unmatched_pattern_count}</p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500">Sample local: {comparisonResult.debug.sample_local_numbers?.join(', ')}</p>
+                            <p className="text-slate-500">Sample Agiloft: {comparisonResult.debug.sample_agiloft_numbers?.join(', ')}</p>
+                          </div>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-2">{comparisonResult.debug.normalization_note}</p>
                       </div>
                     )}
                   </div>
