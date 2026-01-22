@@ -387,14 +387,15 @@ export default function AgiloftIntegration({ user }) {
     setUploading(true);
 
     try {
-      const response = await fetch(`${API}/agiloft/upload-missing-clauses`, {
+      // Use the new upload endpoint
+      const response = await fetch(`${API}/comparison/upload`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
           config,
           clause_numbers: selectedMissingClauses,
-          fetch_fresh: fetchFresh
+          fetch_text: fetchFresh
         })
       });
 
@@ -405,8 +406,8 @@ export default function AgiloftIntegration({ user }) {
         return;
       }
       
-      if (result.success) {
-        toast.success(result.message);
+      if (result.success || result.uploaded_count > 0) {
+        toast.success(`Uploaded ${result.uploaded_count} of ${result.total_requested} clauses`);
         // Refresh comparison after upload
         compareClausesWithAgiloft();
       } else {
