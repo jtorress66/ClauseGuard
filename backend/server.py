@@ -1051,39 +1051,97 @@ async def fetch_live_clause(clause_number: str, request: Request):
         raise HTTPException(status_code=404, detail=f"Could not fetch clause {clause_number} from acquisition.gov")
 
 @clauses_router.post("/sync-from-acquisition-gov")
-async def sync_clauses_from_acquisition_gov(request: Request):
-    """Sync clause index from acquisition.gov"""
+async def sync_clauses_from_acquisition_gov(
+    request: Request,
+    clause_type: Optional[str] = None,
+    force_refresh: bool = False
+):
+    """Sync clause index from acquisition.gov to local database.
+    
+    Query params:
+    - clause_type: "FAR", "DFARS", or None for both
+    - force_refresh: If True, re-scrape even if we have cached data
+    
+    This uses the new scraper module for robust extraction.
+    """
     user = await get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
 
-    # Fetch FAR index
-    far_clauses = await fetch_far_index()
+    # Check if new scraper modules are available
+    if not AGILOFT_CLIENT_AVAILABLE:
+        # Fall back to old method
+        logger.info("Using legacy fetch_far_index for sync")
+        far_clauses = await fetch_far_index()
+        clauses_to_sync = far_clauses
+    else:
+        # Use new scraper module
+        logger.info(f"Using new scraper module for sync. Type: {clause_type}, Force refresh: {force_refresh}")
+        clauses_to_sync = []
+        
+        if clause_type is None or clause_type.upper() == "FAR":
+            far_clauses = await scrape_far_clauses()
+            logger.info(f"Scraped {len(far_clauses)} FAR clauses from acquisition.gov")
+            clauses_to_sync.extend(far_clauses)
+        
+        if clause_type is None or clause_type.upper() == "DFARS":
+            dfars_clauses = await scrape_dfars_clauses()
+            logger.info(f"Scraped {len(dfars_clauses)} DFARS clauses from acquisition.gov")
+            clauses_to_sync.extend(dfars_clauses)
 
     synced_count = 0
-    for clause_info in far_clauses:
+    updated_count = 0
+    
+    for clause_info in clauses_to_sync:
+        # Normalize the clause number field
+        clause_number = clause_info.get("clause_number") or clause_info.get("number", "")
+        if not clause_number:
+            continue
+        
         # Check if we already have this clause
-        existing = await db.clauses.find_one({"number": clause_info["number"]})
+        existing = await db.clauses.find_one({"number": clause_number})
+        
         if not existing:
-            # Create basic entry
+            # Create new entry
             clause_doc = {
                 "clause_id": str(uuid.uuid4()),
-                "number": clause_info["number"],
-                "title": clause_info["title"],
-                "type": clause_info["type"],
-                "text": f"Full text available at acquisition.gov. Search for {clause_info['number']}",
+                "number": clause_number,
+                "title": clause_info.get("title", ""),
+                "type": clause_info.get("type", "FAR"),
+                "text": clause_info.get("text") or f"Full text available at acquisition.gov. Search for {clause_number}",
                 "summary": None,
                 "flowdown_required": False,
                 "contract_types": [],
                 "threshold_amount": None,
                 "keywords": [],
                 "last_updated": datetime.now(timezone.utc).isoformat(),
-                "source": "acquisition.gov-index"
+                "source": "acquisition.gov",
+                "url": clause_info.get("url", "")
             }
             await db.clauses.insert_one(clause_doc)
             synced_count += 1
+        elif force_refresh:
+            # Update existing entry
+            await db.clauses.update_one(
+                {"number": clause_number},
+                {"$set": {
+                    "title": clause_info.get("title", existing.get("title", "")),
+                    "type": clause_info.get("type", existing.get("type", "FAR")),
+                    "last_updated": datetime.now(timezone.utc).isoformat(),
+                    "source": "acquisition.gov",
+                    "url": clause_info.get("url", "")
+                }}
+            )
+            updated_count += 1
 
-    return {"message": f"Synced {synced_count} new clauses from acquisition.gov", "total_new": synced_count}
+    return {
+        "success": True,
+        "message": f"Synced {synced_count} new clauses, updated {updated_count} existing clauses from acquisition.gov",
+        "total_new": synced_count,
+        "total_updated": updated_count,
+        "total_processed": len(clauses_to_sync),
+        "clause_type": clause_type or "all"
+    }
 
 # ==================== Contracts Routes ====================
 
