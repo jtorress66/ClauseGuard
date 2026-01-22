@@ -2218,6 +2218,302 @@ async def update_agiloft_field_mapping(mapping_update: AgiloftFieldMappingUpdate
         "new_mapping": AGILOFT_CLAUSE_FIELD_MAPPING
     }
 
+# ==================== Clause Comparison Routes ====================
+
+class ClauseComparisonRequest(BaseModel):
+    """Request to compare FAR/DFARS clauses with Agiloft KB"""
+    config: AgiloftConfig
+    clause_type: Optional[str] = None  # "FAR", "DFARS", or None for all
+
+class ClauseComparisonResult(BaseModel):
+    """Result of clause comparison"""
+    total_local_clauses: int
+    total_agiloft_clauses: int
+    missing_in_agiloft: List[Dict[str, Any]]
+    missing_in_local: List[Dict[str, Any]]
+    matched_clauses: List[Dict[str, Any]]
+
+@agiloft_router.post("/compare-clauses")
+async def compare_clauses_with_agiloft(comparison_request: ClauseComparisonRequest, request: Request):
+    """Compare FAR/DFARS clauses between local database and Agiloft KB
+    
+    This identifies:
+    1. Clauses in local DB but missing from Agiloft
+    2. Clauses in Agiloft but missing from local DB
+    3. Matched clauses present in both
+    """
+    user = await require_auth(request)
+    
+    config = comparison_request.config
+    
+    # Get local clauses from acquisition.gov indexed data
+    local_filter = {}
+    if comparison_request.clause_type:
+        local_filter["type"] = comparison_request.clause_type
+    
+    local_clauses = await db.clauses.find(local_filter, {"_id": 0}).to_list(1000)
+    local_clause_numbers = {c["number"] for c in local_clauses}
+    local_clause_map = {c["number"]: c for c in local_clauses}
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # Login to Agiloft
+            login_data = await agiloft_login(client, config)
+            token = login_data.get("access_token")
+            
+            if not token:
+                raise HTTPException(status_code=401, detail="Failed to authenticate with Agiloft")
+            
+            auth_headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}"
+            }
+            
+            # Search for all clauses in Agiloft
+            search_url = _build_agiloft_url(config.kb_url, config.kb_name, "clause/search")
+            
+            # Build search query - get all clauses or filtered by type
+            search_payload = {
+                "$select": "id,clause_title,clause_text,clause_type,guidance,clause_usage",
+                "$top": 1000
+            }
+            
+            # Add filter if clause type specified
+            if comparison_request.clause_type:
+                search_payload["$filter"] = f"clause_usage eq '{comparison_request.clause_type}'"
+            
+            logger.info(f"Searching Agiloft clauses: {search_url}")
+            
+            try:
+                search_resp = await client.post(
+                    search_url,
+                    json=search_payload,
+                    headers=auth_headers
+                )
+                
+                agiloft_clauses = []
+                if search_resp.status_code == 200:
+                    search_data = search_resp.json()
+                    
+                    # Handle Agiloft's nested response format
+                    if isinstance(search_data, dict):
+                        if "result" in search_data:
+                            result = search_data["result"]
+                            if isinstance(result, list):
+                                agiloft_clauses = result
+                            elif isinstance(result, dict) and "value" in result:
+                                agiloft_clauses = result["value"]
+                        elif "value" in search_data:
+                            agiloft_clauses = search_data["value"]
+                        elif "records" in search_data:
+                            agiloft_clauses = search_data["records"]
+                    elif isinstance(search_data, list):
+                        agiloft_clauses = search_data
+                    
+                    # Extract DAO objects if present
+                    extracted_clauses = []
+                    for item in agiloft_clauses:
+                        if isinstance(item, dict):
+                            # Check for DAO wrapper
+                            dao_key = next((k for k in item.keys() if k.startswith("DAO")), None)
+                            if dao_key and isinstance(item[dao_key], dict):
+                                extracted_clauses.append(item[dao_key])
+                            else:
+                                extracted_clauses.append(item)
+                    agiloft_clauses = extracted_clauses
+                else:
+                    logger.warning(f"Agiloft clause search returned {search_resp.status_code}: {search_resp.text[:500]}")
+                    
+            except Exception as e:
+                logger.error(f"Error searching Agiloft clauses: {e}")
+                agiloft_clauses = []
+            
+            # Build Agiloft clause number set (try to extract from clause_title)
+            agiloft_clause_numbers = set()
+            agiloft_clause_map = {}
+            
+            import re
+            for agiloft_clause in agiloft_clauses:
+                title = agiloft_clause.get("clause_title", "") or ""
+                # Try to extract clause number pattern (e.g., 52.203-11 or 252.204-7012)
+                match = re.search(r'(\d{2,3}\.\d{3}-\d+)', title)
+                if match:
+                    clause_num = match.group(1)
+                    agiloft_clause_numbers.add(clause_num)
+                    agiloft_clause_map[clause_num] = agiloft_clause
+                else:
+                    # Use full title as identifier
+                    agiloft_clause_numbers.add(title)
+                    agiloft_clause_map[title] = agiloft_clause
+            
+            # Compare
+            missing_in_agiloft = []
+            for num in local_clause_numbers:
+                if num not in agiloft_clause_numbers:
+                    clause = local_clause_map[num]
+                    missing_in_agiloft.append({
+                        "number": clause["number"],
+                        "title": clause["title"],
+                        "type": clause["type"],
+                        "flowdown_required": clause.get("flowdown_required", False),
+                        "source": clause.get("source", "acquisition.gov")
+                    })
+            
+            missing_in_local = []
+            for agiloft_id, agiloft_clause in agiloft_clause_map.items():
+                # Check if this is a clause number or title
+                if agiloft_id not in local_clause_numbers:
+                    missing_in_local.append({
+                        "agiloft_id": agiloft_clause.get("id"),
+                        "clause_title": agiloft_clause.get("clause_title"),
+                        "clause_type": agiloft_clause.get("clause_type"),
+                        "clause_usage": agiloft_clause.get("clause_usage")
+                    })
+            
+            matched_clauses = []
+            for num in local_clause_numbers.intersection(agiloft_clause_numbers):
+                local_clause = local_clause_map.get(num, {})
+                agiloft_clause = agiloft_clause_map.get(num, {})
+                matched_clauses.append({
+                    "number": num,
+                    "local_title": local_clause.get("title"),
+                    "agiloft_title": agiloft_clause.get("clause_title"),
+                    "type": local_clause.get("type")
+                })
+            
+            return {
+                "success": True,
+                "total_local_clauses": len(local_clauses),
+                "total_agiloft_clauses": len(agiloft_clauses),
+                "missing_in_agiloft": missing_in_agiloft,
+                "missing_in_agiloft_count": len(missing_in_agiloft),
+                "missing_in_local": missing_in_local,
+                "missing_in_local_count": len(missing_in_local),
+                "matched_clauses": matched_clauses,
+                "matched_count": len(matched_clauses)
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Clause comparison error: {e}")
+        raise HTTPException(status_code=500, detail=f"Comparison failed: {str(e)}")
+
+class UploadMissingClausesRequest(BaseModel):
+    """Request to upload missing clauses to Agiloft"""
+    config: AgiloftConfig
+    clause_numbers: List[str]  # List of clause numbers to upload
+    fetch_fresh: bool = False  # Whether to fetch fresh from acquisition.gov
+
+@agiloft_router.post("/upload-missing-clauses")
+async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClausesRequest, request: Request):
+    """Upload specified missing clauses from acquisition.gov to Agiloft KB
+    
+    This endpoint:
+    1. Takes a list of clause numbers identified as missing in Agiloft
+    2. Fetches fresh data from acquisition.gov if requested
+    3. Creates the clauses in Agiloft's clause library
+    """
+    user = await require_auth(request)
+    
+    config = upload_request.config
+    clauses_to_upload = []
+    
+    for clause_number in upload_request.clause_numbers:
+        if upload_request.fetch_fresh:
+            # Fetch directly from acquisition.gov
+            clause_data = await fetch_clause_from_acquisition_gov(clause_number)
+            if clause_data:
+                clauses_to_upload.append(clause_data)
+                # Also update our local database
+                await db.clauses.update_one(
+                    {"number": clause_number},
+                    {"$set": clause_data},
+                    upsert=True
+                )
+        else:
+            # Use existing data from our database
+            clause = await db.clauses.find_one({"number": clause_number}, {"_id": 0})
+            if clause:
+                clauses_to_upload.append(clause)
+    
+    if not clauses_to_upload:
+        return {
+            "success": False,
+            "message": "No clauses found to upload",
+            "uploaded": 0,
+            "errors": []
+        }
+    
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            # Login to Agiloft
+            login_data = await agiloft_login(client, config)
+            token = login_data.get("access_token")
+            
+            if not token:
+                raise HTTPException(status_code=401, detail="Failed to authenticate with Agiloft")
+            
+            auth_headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}"
+            }
+            
+            uploaded_count = 0
+            errors_list = []
+            
+            for clause in clauses_to_upload:
+                # Map fields to Agiloft format
+                agiloft_payload = {
+                    "clause_title": f"{clause.get('number', '')} - {clause.get('title', '')}",
+                    "clause_text": clause.get("text", "")[:50000],  # Limit text size
+                    "clause_usage": clause.get("type", "FAR"),
+                    "guidance": clause.get("summary", "") or f"Clause from acquisition.gov: {clause.get('number', '')}",
+                    "boilerplate": "Yes" if clause.get("flowdown_required") else "No",
+                    "condition": ", ".join(clause.get("keywords", [])[:10])
+                }
+                
+                # Create clause in Agiloft
+                create_url = _build_agiloft_url(config.kb_url, config.kb_name, "clause")
+                
+                try:
+                    create_resp = await client.post(
+                        create_url,
+                        json=agiloft_payload,
+                        headers=auth_headers
+                    )
+                    
+                    if create_resp.status_code in [200, 201]:
+                        uploaded_count += 1
+                        logger.info(f"Successfully uploaded clause {clause.get('number')} to Agiloft")
+                    else:
+                        error_msg = create_resp.text[:200]
+                        errors_list.append({
+                            "clause_number": clause.get("number"),
+                            "error": f"HTTP {create_resp.status_code}: {error_msg}"
+                        })
+                        logger.error(f"Failed to upload clause {clause.get('number')}: {error_msg}")
+                except Exception as e:
+                    errors_list.append({
+                        "clause_number": clause.get("number"),
+                        "error": str(e)
+                    })
+                    logger.error(f"Exception uploading clause {clause.get('number')}: {e}")
+            
+            return {
+                "success": uploaded_count > 0,
+                "message": f"Uploaded {uploaded_count} of {len(clauses_to_upload)} clauses to Agiloft",
+                "uploaded": uploaded_count,
+                "total_requested": len(clauses_to_upload),
+                "errors": errors_list
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Upload to Agiloft error: {e}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
 # ==================== Batch Export Routes ====================
 
 class BatchExportRequest(BaseModel):
