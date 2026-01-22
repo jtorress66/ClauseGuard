@@ -339,24 +339,88 @@ async def scrape_dfars_clauses(limit: int = 0) -> List[Dict]:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         }
     ) as client:
-        # Get index of DFARS clauses
-        index_clauses = await find_part_urls(client, "dfars")
+        # DFARS Part 252 - correct URL
+        index_urls = [
+            "https://www.acquisition.gov/dfars/part-252-solicitation-provisions-and-contract-clauses"
+        ]
         
-        if limit > 0:
-            index_clauses = index_clauses[:limit]
+        seen_codes = set()
         
-        logger.info(f"Found {len(index_clauses)} DFARS clauses from index")
+        for index_url in index_urls:
+            logger.info(f"Fetching DFARS index from: {index_url}")
+            
+            html = await fetch_page(client, index_url)
+            if not html:
+                logger.warning(f"Failed to fetch {index_url}")
+                continue
+            
+            soup = make_soup(html)
+            main_region = extract_main_region(soup)
+            
+            # Find all links and headings that contain DFARS clause numbers (252.xxx-xxxx)
+            for link in main_region.find_all('a', href=True):
+                href = link.get('href', '')
+                text = link.get_text(' ', strip=True)
+                
+                m = SECTION_RE.search(text)
+                if m:
+                    code = normalize_clause_id(m.group(1))
+                    
+                    # DFARS clauses start with 252.
+                    if not code.startswith('252.'):
+                        continue
+                    
+                    if code in seen_codes:
+                        continue
+                    seen_codes.add(code)
+                    
+                    # Extract title
+                    title = text[m.end():].strip().lstrip(' .-–—:').strip()
+                    
+                    # Build full URL
+                    if href.startswith('/'):
+                        full_url = f"{BASE}{href}"
+                    elif href.startswith('http'):
+                        full_url = href
+                    else:
+                        full_url = f"{BASE}/{href}"
+                    
+                    clauses.append({
+                        "clause_number": code,
+                        "title": title or f"DFARS Clause {code}",
+                        "type": "DFARS",
+                        "date": None,
+                        "text": None,
+                        "html": None,
+                        "url": full_url
+                    })
+            
+            # Also check headings
+            for heading in main_region.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                text = heading.get_text(' ', strip=True)
+                m = SECTION_RE.search(text)
+                if m:
+                    code = normalize_clause_id(m.group(1))
+                    if not code.startswith('252.'):
+                        continue
+                    
+                    if code in seen_codes:
+                        continue
+                    seen_codes.add(code)
+                    
+                    title = text[m.end():].strip().lstrip(' .-–—:').strip()
+                    
+                    clauses.append({
+                        "clause_number": code,
+                        "title": title or f"DFARS Clause {code}",
+                        "type": "DFARS",
+                        "date": None,
+                        "text": None,
+                        "html": None,
+                        "url": f"{BASE}/dfars/{code}"
+                    })
         
-        for clause in index_clauses:
-            clauses.append({
-                "clause_number": clause["clause_number"],
-                "title": clause["title"],
-                "type": "DFARS",
-                "date": None,
-                "text": None,
-                "html": None,
-                "url": clause["url"]
-            })
+        logger.info(f"Found {len(clauses)} DFARS clauses from index")
     
     return clauses
 
