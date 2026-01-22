@@ -6,7 +6,7 @@ import os
 import asyncio
 import httpx
 import logging
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Set
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -24,12 +24,9 @@ class AgiloftClient:
     """
     Agiloft REST API Client
     
-    Based on OpenAPI spec endpoints:
-    - POST /login - authenticate and get token
-    - POST /clause/search - search Clause Library
-    - POST /clause - create clause
-    - POST /clause/upsert - create or update clause
-    - PUT /clause/{id} - update clause
+    Uses REST API endpoints:
+    - POST /login - authenticate and get Bearer token
+    - POST /clause/search - search Clause Library with field array
     """
     
     def __init__(self, config: AgiloftConfig):
@@ -54,14 +51,18 @@ class AgiloftClient:
         
         kb_url = kb_url.rstrip('/')
         
-        # Build REST API path
-        base = f"{kb_url}/ewws/alrest/{self.config.kb_name}"
+        # Build REST API path - note: kb_name is lowercase in URL
+        base = f"{kb_url}/ewws/alrest/{self.config.kb_name.lower()}"
         logger.info(f"Built Agiloft base URL: {base}")
         return base
     
     async def login(self) -> bool:
         """
-        Authenticate with Agiloft and store token.
+        Authenticate with Agiloft and get Bearer token.
+        
+        POST /login
+        Body: {"login": "...", "password": "...", "KB": "...", "lang": "EN"}
+        Response: {"result": {"access_token": "..."}}
         
         Returns True if successful, False otherwise.
         """
@@ -71,7 +72,7 @@ class AgiloftClient:
             "login": self.config.username,
             "password": self.config.password,
             "KB": self.config.kb_name,
-            "lang": "en"
+            "lang": "EN"
         }
         
         logger.info(f"Agiloft login to: {url}")
@@ -81,53 +82,78 @@ class AgiloftClient:
                 response = await client.post(
                     url,
                     json=payload,
-                    headers={"Content-Type": "application/json"}
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json"
+                    }
                 )
+                
+                logger.info(f"Login response status: {response.status_code}")
                 
                 if response.status_code == 200:
                     data = response.json()
-                    if data.get("success"):
-                        self.token = data.get("result", {}).get("access_token")
+                    if data.get("success") or data.get("result"):
+                        # Token is in result.access_token
+                        result = data.get("result", {})
+                        self.token = result.get("access_token")
                         if self.token:
-                            logger.info("Agiloft login successful")
+                            logger.info("Agiloft login successful, got access_token")
                             return True
                         else:
-                            logger.error("No access token in response")
+                            logger.error(f"No access_token in response: {data}")
                     else:
-                        logger.error(f"Agiloft login failed: {data.get('message', 'Unknown error')}")
+                        logger.error(f"Agiloft login failed: {data}")
                 else:
-                    logger.error(f"Agiloft login failed: HTTP {response.status_code}")
+                    logger.error(f"Agiloft login failed: HTTP {response.status_code} - {response.text[:200]}")
             except Exception as e:
                 logger.error(f"Agiloft login error: {e}")
         
         return False
     
     def _get_auth_headers(self) -> Dict[str, str]:
-        """Get headers with auth token."""
+        """Get headers with Bearer token."""
         return {
+            "Accept": "application/json",
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.token}"
         }
     
-    async def search_clauses(self, select_fields: Optional[List[str]] = None, 
-                             top: int = 5000) -> List[Dict]:
+    async def get_clause_numbers(self) -> Set[str]:
         """
-        Search Clause Library and return all clauses.
+        Retrieve all existing Clause Numbers from Agiloft Clause Library.
+        
+        Uses POST /clause/search with body:
+        {
+            "search": "",
+            "field": ["clause_number"],
+            "query": ""
+        }
+        
+        Filters out null/empty values and returns a set of unique clause numbers.
+        
+        Returns:
+            Set of clause number strings like {"52.203-12", "252.204-7012", ...}
         """
         if not self.token:
             if not await self.login():
                 raise Exception("Failed to authenticate with Agiloft")
         
+        url = f"{self.base_url}/clause/search"
+        
+        # Use the exact body format specified
+        # DO NOT request clause_type - it causes HTTP 400
+        payload = {
+            "search": "",
+            "field": ["clause_number"],
+            "query": ""
+        }
+        
+        logger.info(f"Searching Agiloft clauses: {url}")
+        logger.info(f"Payload: {payload}")
+        
+        clause_numbers: Set[str] = set()
+        
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # Try the search endpoint with $select
-            url = f"{self.base_url}/clause/search"
-            payload = {
-                "$select": "id,clause_number,clause_title,clause_type,clause_text",
-                "$top": top
-            }
-            
-            logger.info(f"Searching Agiloft: {url}")
-            
             try:
                 response = await client.post(
                     url,
@@ -136,124 +162,66 @@ class AgiloftClient:
                     headers=self._get_auth_headers()
                 )
                 
+                logger.info(f"Search response status: {response.status_code}")
+                
                 if response.status_code == 200:
                     data = response.json()
-                    clauses = self._extract_records(data)
-                    logger.info(f"Got {len(clauses)} clauses from Agiloft")
                     
-                    if clauses:
-                        sample = clauses[0]
-                        logger.info(f"Fields returned: {list(sample.keys())}")
-                        
-                        # Check if clause_number is returned
-                        has_clause_number = any(c.get("clause_number") for c in clauses[:10])
-                        
-                        if not has_clause_number:
-                            logger.warning("Agiloft REST API is NOT returning clause_number field!")
-                            logger.warning("This is a known Agiloft limitation - the API only returns system fields.")
-                            logger.warning("Returning clauses with just IDs - comparison will not work correctly.")
+                    # Response: {"result": [{"clause_number": "52.203-12"}, {"clause_number": null}, ...]}
+                    result = data.get("result", [])
                     
-                    return clauses
+                    if isinstance(result, list):
+                        total_records = len(result)
+                        logger.info(f"Got {total_records} total records from Agiloft")
+                        
+                        # Filter out null/empty values
+                        for record in result:
+                            val = record.get("clause_number")
+                            
+                            # Skip if null/None
+                            if not val:
+                                continue
+                            
+                            # Convert to string and strip whitespace
+                            val = str(val).strip()
+                            
+                            # Skip if empty after strip
+                            if not val:
+                                continue
+                            
+                            # Add to set (automatically handles duplicates)
+                            clause_numbers.add(val)
+                        
+                        logger.info(f"Found {len(clause_numbers)} valid clause numbers (filtered out {total_records - len(clause_numbers)} null/empty)")
+                        
+                        # Log sample
+                        sample = list(clause_numbers)[:10]
+                        logger.info(f"Sample clause numbers: {sample}")
+                    else:
+                        logger.warning(f"Unexpected result format: {type(result)}")
                 else:
-                    logger.error(f"Search failed: {response.status_code}")
-                    return []
+                    logger.error(f"Search failed: {response.status_code} - {response.text[:500]}")
                     
             except Exception as e:
                 logger.error(f"Search error: {e}")
-                return []
+                raise
+        
+        return clause_numbers
     
-    async def _get_clause_by_id(self, client: httpx.AsyncClient, clause_id: int) -> Optional[Dict]:
-        """Fetch a single clause by ID to get full field data."""
-        url = f"{self.base_url}/clause/{clause_id}"
-        
-        try:
-            response = await client.get(
-                url,
-                params={"lang": "en"},
-                headers=self._get_auth_headers()
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                # Log the first few responses to see the structure
-                if clause_id <= 5:
-                    logger.info(f"Clause {clause_id} raw response: {str(data)[:500]}")
-                
-                if data.get("success") and data.get("result"):
-                    result = data["result"]
-                    # Extract from DAO wrapper if present
-                    if isinstance(result, dict):
-                        dao_key = next((k for k in result.keys() if k.startswith("DAO")), None)
-                        if dao_key and isinstance(result[dao_key], dict):
-                            clause_data = result[dao_key]
-                            if clause_id <= 5:
-                                logger.info(f"Clause {clause_id} extracted fields: {list(clause_data.keys())}")
-                                logger.info(f"Clause {clause_id} clause_number: {clause_data.get('clause_number', 'N/A')}")
-                            return clause_data
-                        return result
-                    return result
-        except Exception as e:
-            logger.debug(f"Error fetching clause {clause_id}: {e}")
-        
-        return None
-    
-    def _extract_records(self, data: Any) -> List[Dict]:
+    async def search_clauses(self, select_fields: Optional[List[str]] = None, 
+                             top: int = 5000) -> List[Dict]:
         """
-        Extract records from Agiloft's nested response format.
-        
-        Agiloft wraps results in various structures:
-        - {result: [{DAOclause: {...}}, ...]}
-        - {result: {value: [...]}}
-        - {value: [...]}
-        - etc.
+        Search Clause Library and return clause records.
+        This is a wrapper for backward compatibility.
         """
-        records = []
+        clause_numbers = await self.get_clause_numbers()
         
-        if isinstance(data, list):
-            records = data
-        elif isinstance(data, dict):
-            # Try different response formats
-            if "result" in data:
-                result = data["result"]
-                if isinstance(result, list):
-                    records = result
-                elif isinstance(result, dict):
-                    if "value" in result:
-                        records = result["value"]
-                    else:
-                        records = [result]
-            elif "value" in data:
-                records = data["value"]
-            elif "records" in data:
-                records = data["records"]
-        
-        # Extract from DAO wrapper if present
-        extracted = []
-        for record in records:
-            if isinstance(record, dict):
-                # Check for DAOclause wrapper
-                dao_key = next((k for k in record.keys() if k.startswith("DAO")), None)
-                if dao_key and isinstance(record[dao_key], dict):
-                    clause_data = record[dao_key].copy()
-                    # Include id from parent if not in nested
-                    if "id" not in clause_data and "id" in record:
-                        clause_data["id"] = record["id"]
-                    extracted.append(clause_data)
-                else:
-                    extracted.append(record)
-        
-        return extracted
+        # Convert to list of dicts for compatibility
+        return [{"clause_number": num} for num in clause_numbers]
     
     async def create_clause(self, clause_data: Dict) -> Dict:
         """
         Create a new clause in Agiloft.
-        
-        Args:
-            clause_data: Dict with clause_number, clause_title, clause_text, etc.
-        
-        Returns:
-            Response dict with success status and created record
         """
         if not self.token:
             if not await self.login():
@@ -296,16 +264,6 @@ class AgiloftClient:
     async def upsert_clause(self, clause_data: Dict, query_field: str = "clause_number") -> Dict:
         """
         Create or update a clause (upsert).
-        
-        Uses the query parameter to find existing record by field value.
-        If found, updates; if not found, creates.
-        
-        Args:
-            clause_data: Dict with clause data
-            query_field: Field to match on (default: clause_number)
-        
-        Returns:
-            Response dict
         """
         if not self.token:
             if not await self.login():
@@ -349,37 +307,3 @@ class AgiloftClient:
                     "error": str(e),
                     "clause_number": clause_data.get("clause_number")
                 }
-    
-    async def get_clause_numbers(self) -> set:
-        """
-        Get all clause numbers from Agiloft Clause Library.
-        
-        Returns:
-            Set of normalized clause numbers
-        """
-        from acqgov_scraper import normalize_clause_id
-        
-        clauses = await self.search_clauses(
-            select_fields=["id", "clause_number", "clause_title"],
-            top=10000
-        )
-        
-        numbers = set()
-        for clause in clauses:
-            # Try clause_number field first
-            clause_num = clause.get("clause_number", "")
-            
-            # If empty, try to extract from clause_title
-            if not clause_num:
-                from acqgov_scraper import SECTION_RE
-                title = clause.get("clause_title", "")
-                m = SECTION_RE.search(title)
-                if m:
-                    clause_num = m.group(1)
-            
-            if clause_num:
-                normalized = normalize_clause_id(clause_num)
-                numbers.add(normalized)
-        
-        logger.info(f"Found {len(numbers)} unique clause numbers in Agiloft")
-        return numbers
