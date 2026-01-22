@@ -2592,8 +2592,10 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
                 create_url = _build_agiloft_url(config.kb_url, config.kb_name, "clause")
                 
                 try:
+                    # IMPORTANT: Add lang parameter as query string - required by Agiloft API
                     create_resp = await client.post(
                         create_url,
+                        params={"lang": "en"},
                         json=agiloft_payload,
                         headers=auth_headers
                     )
