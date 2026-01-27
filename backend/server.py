@@ -1489,7 +1489,7 @@ async def delete_annotation(annotation_id: str, request: Request):
 
 @api_router.post("/export/pdf")
 async def export_to_pdf(request: Request):
-    """Export clauses to PDF"""
+    """Export clauses to PDF with full text"""
     user = await require_auth(request)
     
     # Parse request body
@@ -1503,6 +1503,25 @@ async def export_to_pdf(request: Request):
     clause_docs = []
     for clause_num in clauses:
         clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
+        
+        # If clause not in DB or missing text, fetch from acquisition.gov
+        if not clause or not clause.get("text"):
+            try:
+                live_clause = await fetch_clause_from_acquisition_gov(clause_num)
+                if live_clause:
+                    if clause:
+                        clause["text"] = live_clause.get("text", "")
+                    else:
+                        clause = live_clause
+                    # Update DB with fetched text
+                    await db.clauses.update_one(
+                        {"number": clause_num},
+                        {"$set": {"text": live_clause.get("text", "")}},
+                        upsert=True
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to fetch clause {clause_num} from acquisition.gov: {e}")
+        
         if clause:
             clause_docs.append(clause)
 
@@ -1516,15 +1535,36 @@ async def export_to_pdf(request: Request):
     story.append(Paragraph("Federal Clause Report", styles['Title']))
     story.append(Spacer(1, 0.5*inch))
     story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal']))
+    story.append(Paragraph(f"Exported by: {user.name}", styles['Normal']))
     story.append(Spacer(1, 0.5*inch))
 
     for clause in clause_docs:
-        story.append(Paragraph(f"{clause['number']}: {clause['title']}", styles['Heading2']))
-        story.append(Paragraph(f"Type: {clause['type']}", styles['Normal']))
+        story.append(Paragraph(f"{clause.get('number', 'N/A')}: {clause.get('title', 'Untitled')}", styles['Heading2']))
+        story.append(Paragraph(f"Type: {clause.get('type', 'N/A')}", styles['Normal']))
         story.append(Paragraph(f"Flowdown Required: {'Yes' if clause.get('flowdown_required') else 'No'}", styles['Normal']))
+        story.append(Spacer(1, 0.2*inch))
+        
+        # Include summary if available
         if clause.get('summary'):
-            story.append(Paragraph(f"Summary: {clause['summary']}", styles['Normal']))
-        story.append(Spacer(1, 0.3*inch))
+            story.append(Paragraph("<b>Summary:</b>", styles['Normal']))
+            story.append(Paragraph(clause['summary'], styles['Normal']))
+            story.append(Spacer(1, 0.2*inch))
+        
+        # Include full text
+        if clause.get('text'):
+            story.append(Paragraph("<b>Full Text:</b>", styles['Normal']))
+            # Split text into paragraphs and limit to avoid huge PDFs
+            text = clause['text'][:20000]  # Limit to 20000 chars per clause
+            for para in text.split('\n\n'):
+                if para.strip():
+                    # Clean up the paragraph
+                    clean_para = para.strip().replace('\n', ' ')
+                    story.append(Paragraph(clean_para, styles['Normal']))
+                    story.append(Spacer(1, 0.1*inch))
+        else:
+            story.append(Paragraph("<i>Full text not available. Visit acquisition.gov for complete clause text.</i>", styles['Normal']))
+        
+        story.append(Spacer(1, 0.5*inch))
 
     doc.build(story)
     buffer.seek(0)
