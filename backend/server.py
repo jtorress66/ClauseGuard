@@ -1480,9 +1480,16 @@ async def delete_annotation(annotation_id: str, request: Request):
 # ==================== Export Routes ====================
 
 @api_router.post("/export/pdf")
-async def export_to_pdf(clauses: List[str], request: Request):
+async def export_to_pdf(request: Request):
     """Export clauses to PDF"""
     user = await require_auth(request)
+    
+    # Parse request body
+    try:
+        body = await request.json()
+        clauses = body.get("clauses", [])
+    except:
+        raise HTTPException(status_code=400, detail="Invalid request body")
 
     # Get clause details
     clause_docs = []
