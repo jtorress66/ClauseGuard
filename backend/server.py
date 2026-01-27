@@ -2912,31 +2912,31 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
                 "clause_date": current_date      # Required - date field
             }
             
-            logger.info(f"=== UPLOADING CLAUSE {clause_number} ===")
-            logger.info(f"Using upsert endpoint with query: clause_number~='{clause_number}'")
-            logger.info(f"Body fields: {list(agiloft_payload.keys())}")
-            logger.info(f"clause_text length: {len(agiloft_payload.get('clause_text', ''))} chars")
+            logger.info(f"=== UPLOADING {clause_number} ===")
+            logger.info(f"Title: {clause_title[:80]}...")
+            logger.info(f"Text length: {len(clause_text)} chars")
+            logger.info(f"Date: {current_date}")
             
             try:
-                # Use upsert_clause - clause_number goes in query param
-                result = await agiloft_client.upsert_clause(agiloft_payload, clause_number)
+                # Use create_clause to POST to /clause endpoint
+                result = await agiloft_client.create_clause(agiloft_payload)
                 
                 if result.get("success"):
                     uploaded_count += 1
-                    logger.info(f"Successfully uploaded clause {clause.get('number')} to Agiloft (action: {result.get('action', 'unknown')})")
+                    logger.info(f"SUCCESS: Uploaded {clause_number}")
                 else:
                     error_msg = result.get("error", "Unknown error")
                     errors_list.append({
-                        "clause_number": clause.get("number"),
+                        "clause_number": clause_number,
                         "error": error_msg
                     })
-                    logger.error(f"Failed to upload clause {clause.get('number')}: {error_msg}")
+                    logger.error(f"FAILED: {clause_number} - {error_msg}")
             except Exception as e:
                 errors_list.append({
-                    "clause_number": clause.get("number"),
+                    "clause_number": clause_number,
                     "error": str(e)
                 })
-                logger.error(f"Exception uploading clause {clause.get('number')}: {e}")
+                logger.error(f"EXCEPTION uploading {clause_number}: {e}")
         
         return {
             "success": uploaded_count > 0,
