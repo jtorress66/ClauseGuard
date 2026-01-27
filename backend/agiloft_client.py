@@ -297,7 +297,11 @@ class AgiloftClient:
                 )
                 
                 logger.info(f"Agiloft create clause response status: {response.status_code}")
-                logger.info(f"Agiloft create clause response (first 500 chars): {response.text[:500]}")
+                logger.info(f"Agiloft create clause response body: {response.text}")
+                
+                # ALWAYS log full response to stderr for debugging
+                import sys
+                print(f"AGILOFT RESPONSE [{response.status_code}]: {response.text}", file=sys.stderr)
                 
                 if response.status_code in [200, 201]:
                     try:
@@ -314,10 +318,16 @@ class AgiloftClient:
                                     "id": data.get("result", {}).get("id") if isinstance(data.get("result"), dict) else None
                                 }
                             else:
-                                error_msg = data.get("message", data.get("error", "API returned success=false"))
+                                # API returned success=false - extract full error
+                                errors = data.get("errors", [])
+                                error_msg = data.get("message", "")
+                                if errors and isinstance(errors, list):
+                                    error_msg = "; ".join([e.get("message", str(e)) for e in errors])
                                 return {
                                     "success": False,
-                                    "error": error_msg,
+                                    "error": error_msg or "API returned success=false",
+                                    "agiloft_status": response.status_code,
+                                    "agiloft_response": data,
                                     "clause_number": clause_data.get("clause_number")
                                 }
                         else:
@@ -334,16 +344,34 @@ class AgiloftClient:
                             "clause_number": clause_data.get("clause_number")
                         }
                 else:
-                    error_text = response.text[:500]
-                    logger.error(f"Agiloft create clause failed: HTTP {response.status_code} - {error_text}")
+                    # Non-200 response - return FULL error details
+                    error_text = response.text
+                    logger.error(f"AGILOFT CREATE FAILED: HTTP {response.status_code}")
+                    logger.error(f"AGILOFT ERROR BODY: {error_text}")
+                    
+                    # Try to parse as JSON for better error message
+                    try:
+                        error_json = response.json()
+                        errors = error_json.get("errors", [])
+                        if errors:
+                            error_msg = "; ".join([e.get("message", str(e)) for e in errors])
+                        else:
+                            error_msg = error_json.get("message", error_text)
+                    except:
+                        error_msg = error_text
+                    
                     return {
                         "success": False,
-                        "error": f"HTTP {response.status_code}: {error_text}",
+                        "error": error_msg,
+                        "agiloft_status": response.status_code,
+                        "agiloft_response": error_text,
                         "clause_number": clause_data.get("clause_number")
                     }
                     
             except Exception as e:
                 logger.error(f"Exception creating clause in Agiloft: {e}")
+                import traceback
+                traceback.print_exc()
                 return {
                     "success": False,
                     "error": str(e),
