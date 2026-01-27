@@ -109,6 +109,44 @@ export default function Dashboard({ user }) {
     }
   };
 
+  const syncAllClauses = async () => {
+    setSyncing(true);
+    toast.info("Syncing clauses from acquisition.gov...");
+    
+    try {
+      // First sync clause index
+      const indexRes = await fetch(`${API}/clauses/sync-from-acquisition-gov`, {
+        method: "POST",
+        credentials: "include"
+      });
+      
+      if (indexRes.ok) {
+        const indexData = await indexRes.json();
+        toast.success(`Synced ${indexData.total_new} new clauses from index`);
+      }
+      
+      // Then sync full text for clauses missing it
+      const textRes = await fetch(`${API}/clauses/sync-full-text?limit=100`, {
+        method: "POST",
+        credentials: "include"
+      });
+      
+      if (textRes.ok) {
+        const textData = await textRes.json();
+        if (textData.synced > 0) {
+          toast.success(`Synced full text for ${textData.synced} clauses`);
+        } else if (textData.total_checked === 0) {
+          toast.info("All clauses already have full text");
+        }
+      }
+    } catch (error) {
+      console.error("Sync error:", error);
+      toast.error("Failed to sync clauses");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const quickActions = [
     { icon: Search, label: "AI Clause Search", desc: "Smart search", onClick: () => navigate("/search?ai=true"), color: "from-teal-500 to-emerald-500" },
     { icon: Upload, label: "Upload Contract", desc: "Analyze docs", onClick: () => navigate("/upload"), color: "from-slate-600 to-slate-700" },
