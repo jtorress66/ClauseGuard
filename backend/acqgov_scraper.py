@@ -385,6 +385,10 @@ async def scrape_dfars_clauses(limit: int = 0) -> List[Dict]:
                     # Extract title
                     title = text[m.end():].strip().lstrip(' .-–—:').strip()
                     
+                    # Skip "Reserved" clauses - they are empty placeholders
+                    if title.lower().startswith("reserved") or "[reserved]" in title.lower():
+                        continue
+                    
                     # Build full URL
                     if href.startswith('/'):
                         full_url = f"{BASE}{href}"
@@ -417,6 +421,10 @@ async def scrape_dfars_clauses(limit: int = 0) -> List[Dict]:
                     seen_codes.add(code)
                     
                     title = text[m.end():].strip().lstrip(' .-–—:').strip()
+                    
+                    # Skip "Reserved" clauses - they are empty placeholders
+                    if title.lower().startswith("reserved") or "[reserved]" in title.lower():
+                        continue
                     
                     clauses.append({
                         "clause_number": code,
