@@ -222,6 +222,7 @@ class AgiloftClient:
     async def create_clause(self, clause_data: Dict) -> Dict:
         """
         Create a new clause in Agiloft.
+        Uses the same format as the search endpoint - POST /clause with JSON body.
         """
         if not self.token:
             if not await self.login():
@@ -229,7 +230,8 @@ class AgiloftClient:
         
         url = f"{self.base_url}/clause"
         
-        logger.info(f"Creating clause: {clause_data.get('clause_number', 'N/A')}")
+        logger.info(f"Creating clause in Agiloft: {clause_data.get('clause_number', 'N/A')}")
+        logger.info(f"Payload: {clause_data}")
         
         async with httpx.AsyncClient(timeout=60.0) as client:
             try:
@@ -240,21 +242,54 @@ class AgiloftClient:
                     headers=self._get_auth_headers()
                 )
                 
+                logger.info(f"Agiloft create clause response status: {response.status_code}")
+                logger.info(f"Agiloft create clause response (first 500 chars): {response.text[:500]}")
+                
                 if response.status_code in [200, 201]:
-                    data = response.json()
-                    return {
-                        "success": data.get("success", True),
-                        "data": data,
-                        "clause_number": clause_data.get("clause_number")
-                    }
+                    try:
+                        data = response.json()
+                        # Check for success in response body
+                        if isinstance(data, dict):
+                            # Agiloft returns {"success": true, "result": {...}} on success
+                            api_success = data.get("success", True)
+                            if api_success:
+                                return {
+                                    "success": True,
+                                    "data": data,
+                                    "clause_number": clause_data.get("clause_number"),
+                                    "id": data.get("result", {}).get("id") if isinstance(data.get("result"), dict) else None
+                                }
+                            else:
+                                error_msg = data.get("message", data.get("error", "API returned success=false"))
+                                return {
+                                    "success": False,
+                                    "error": error_msg,
+                                    "clause_number": clause_data.get("clause_number")
+                                }
+                        else:
+                            return {
+                                "success": True,
+                                "data": data,
+                                "clause_number": clause_data.get("clause_number")
+                            }
+                    except Exception as json_err:
+                        logger.warning(f"Failed to parse Agiloft response as JSON: {json_err}")
+                        return {
+                            "success": True,
+                            "data": response.text,
+                            "clause_number": clause_data.get("clause_number")
+                        }
                 else:
+                    error_text = response.text[:500]
+                    logger.error(f"Agiloft create clause failed: HTTP {response.status_code} - {error_text}")
                     return {
                         "success": False,
-                        "error": response.text[:200],
+                        "error": f"HTTP {response.status_code}: {error_text}",
                         "clause_number": clause_data.get("clause_number")
                     }
                     
             except Exception as e:
+                logger.error(f"Exception creating clause in Agiloft: {e}")
                 return {
                     "success": False,
                     "error": str(e),
