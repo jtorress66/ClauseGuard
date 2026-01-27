@@ -153,7 +153,8 @@ export default function Dashboard({ user }) {
     { icon: Download, label: "Flowdown Analysis", desc: "Check compliance", onClick: () => navigate("/flowdown"), color: "from-amber-500 to-orange-500" },
     { icon: FileText, label: "Compare Contracts", desc: "Side by side", onClick: () => navigate("/compare"), color: "from-violet-500 to-purple-500" },
     { icon: BarChart3, label: "Batch Export", desc: "Export clauses", onClick: () => navigate("/export"), color: "from-blue-500 to-indigo-500" },
-    { icon: Database, label: "Agiloft Sync", desc: "Integration", onClick: () => navigate("/agiloft"), color: "from-slate-500 to-zinc-600" }
+    { icon: Database, label: "Agiloft Sync", desc: "Integration", onClick: () => navigate("/agiloft"), color: "from-slate-500 to-zinc-600" },
+    { icon: RefreshCw, label: "Sync All Clauses", desc: "Fetch full text", onClick: syncAllClauses, color: "from-emerald-500 to-teal-600", loading: syncing }
   ];
 
   return (
