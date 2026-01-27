@@ -220,6 +220,10 @@ async def find_part_urls(client: httpx.AsyncClient, part_type: str = "far") -> L
             
             title = text[m.end():].strip().lstrip(' .-–—:').strip()
             
+            # Skip "Reserved" clauses - they are empty placeholders
+            if title.lower().startswith("reserved") or "[reserved]" in title.lower():
+                continue
+            
             # Look for a link in or near the heading
             link = heading.find('a', href=True)
             if link:
