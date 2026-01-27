@@ -241,7 +241,7 @@ export default function SearchResults() {
               <div className="flex items-center gap-2">
                 <Database className="w-4 h-4 text-slate-400" />
                 <span className="text-sm text-slate-500">
-                  {results.length} results for "{query}"
+                  {results.length} results for &ldquo;{query}&rdquo;
                 </span>
                 <span className="text-xs bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full">
                   Source: acquisition.gov
