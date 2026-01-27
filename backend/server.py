@@ -2736,38 +2736,55 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
     
     This endpoint:
     1. Takes a list of clause numbers identified as missing in Agiloft
-    2. Fetches fresh data from acquisition.gov if requested
+    2. Fetches data from acquisition.gov (always - since comparison data comes from there)
     3. Creates the clauses in Agiloft's clause library using the new AgiloftClient
     """
     user = await require_auth(request)
     
     config = upload_request.config
     clauses_to_upload = []
+    fetch_errors = []
     
     for clause_number in upload_request.clause_numbers:
-        if upload_request.fetch_fresh:
-            # Fetch directly from acquisition.gov
-            clause_data = await fetch_clause_from_acquisition_gov(clause_number)
-            if clause_data:
-                clauses_to_upload.append(clause_data)
-                # Also update our local database
-                await db.clauses.update_one(
-                    {"number": clause_number},
-                    {"$set": clause_data},
-                    upsert=True
-                )
+        # First try local database
+        clause = await db.clauses.find_one({"number": clause_number}, {"_id": 0})
+        
+        # If not in DB or missing text, fetch from acquisition.gov
+        if not clause or not clause.get("text"):
+            logger.info(f"Fetching clause {clause_number} from acquisition.gov...")
+            try:
+                clause_data = await fetch_clause_from_acquisition_gov(clause_number)
+                if clause_data:
+                    clauses_to_upload.append(clause_data)
+                    # Also update our local database
+                    await db.clauses.update_one(
+                        {"number": clause_number},
+                        {"$set": clause_data},
+                        upsert=True
+                    )
+                else:
+                    # Clause not found on acquisition.gov either - create minimal entry
+                    # This happens when it's a valid clause number from the index but no detail page
+                    minimal_clause = {
+                        "number": clause_number,
+                        "title": f"Clause {clause_number}",
+                        "type": "FAR" if clause_number.startswith("52.") else "DFARS",
+                        "text": f"Clause {clause_number} - Text not available. Please refer to acquisition.gov for full text."
+                    }
+                    clauses_to_upload.append(minimal_clause)
+                    fetch_errors.append(f"{clause_number}: Could not fetch full text, using minimal entry")
+            except Exception as e:
+                logger.warning(f"Failed to fetch clause {clause_number}: {e}")
+                fetch_errors.append(f"{clause_number}: {str(e)}")
         else:
-            # Use existing data from our database
-            clause = await db.clauses.find_one({"number": clause_number}, {"_id": 0})
-            if clause:
-                clauses_to_upload.append(clause)
+            clauses_to_upload.append(clause)
     
     if not clauses_to_upload:
         return {
             "success": False,
-            "message": "No clauses found to upload",
+            "message": f"No clauses could be found or fetched. Errors: {'; '.join(fetch_errors) if fetch_errors else 'Unknown error'}",
             "uploaded": 0,
-            "errors": []
+            "errors": fetch_errors
         }
     
     try:
