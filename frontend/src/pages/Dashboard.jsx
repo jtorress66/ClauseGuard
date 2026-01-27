@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { 
   Search, FileText, Download, LogOut, Star, 
   Clock, Upload, ChevronRight, BarChart3, BookOpen, 
-  Bell, Settings, Plus, Trash2, Database, ArrowRight
+  Bell, Settings, Plus, Trash2, Database, ArrowRight, RefreshCw, Loader2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +25,7 @@ export default function Dashboard({ user }) {
   const [favorites, setFavorites] = useState([]);
   const [savedSearches, setSavedSearches] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
