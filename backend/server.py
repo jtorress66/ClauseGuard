@@ -2963,18 +2963,39 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
                     uploaded_count += 1
                     logger.info(f"SUCCESS: Uploaded {clause_number}")
                 else:
+                    # Capture FULL Agiloft error details
                     error_msg = result.get("error", "Unknown error")
-                    errors_list.append({
+                    agiloft_status = result.get("agiloft_status", "N/A")
+                    agiloft_response = result.get("agiloft_response", "")
+                    
+                    error_entry = {
                         "clause_number": clause_number,
-                        "error": error_msg
-                    })
+                        "error": error_msg,
+                        "agiloft_status": agiloft_status,
+                        "agiloft_response": agiloft_response
+                    }
+                    errors_list.append(error_entry)
+                    
+                    # Log full error to stderr
+                    import sys
+                    print(f"UPLOAD FAILED for {clause_number}:", file=sys.stderr)
+                    print(f"  Error: {error_msg}", file=sys.stderr)
+                    print(f"  Agiloft Status: {agiloft_status}", file=sys.stderr)
+                    print(f"  Agiloft Response: {agiloft_response}", file=sys.stderr)
+                    
                     logger.error(f"FAILED: {clause_number} - {error_msg}")
+                    logger.error(f"Agiloft Status: {agiloft_status}")
+                    logger.error(f"Agiloft Response: {agiloft_response}")
             except Exception as e:
+                import traceback
+                tb = traceback.format_exc()
                 errors_list.append({
                     "clause_number": clause_number,
-                    "error": str(e)
+                    "error": str(e),
+                    "traceback": tb
                 })
                 logger.error(f"EXCEPTION uploading {clause_number}: {e}")
+                print(f"EXCEPTION uploading {clause_number}: {e}\n{tb}", file=sys.stderr)
         
         return {
             "success": uploaded_count > 0,
@@ -2983,7 +3004,7 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
             "total_requested": len(upload_request.clause_numbers),
             "total_valid": len(clauses_to_upload),
             "skipped": skipped_clauses,
-            "errors": errors_list
+            "errors": errors_list  # Now contains full Agiloft error details
         }
             
     except HTTPException:
