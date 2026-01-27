@@ -2887,17 +2887,40 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
         errors_list = []
         
         for clause in clauses_to_upload:
-            # Map fields to Agiloft format based on OpenAPI spec
-            # Fields: clause_number, clause_title, clause_text, clause_type
+            # Map fields to Agiloft format - REQUIRED fields per user specification:
+            # clause_number, clause_title, clause_text, regulation, status
+            clause_type = clause.get("type", "FAR")
+            clause_number = clause.get('number', '')
+            
+            # Determine regulation based on clause type
+            regulation = "FAR" if clause_type == "FAR" else "DFARS"
+            
+            # Get full text - fetch from acquisition.gov if missing
+            clause_text = clause.get("text", "")
+            if not clause_text or len(clause_text) < 500:
+                try:
+                    logger.info(f"Fetching full text for {clause_number} before upload...")
+                    live_clause = await fetch_clause_from_acquisition_gov(clause_number)
+                    if live_clause and live_clause.get("text"):
+                        clause_text = live_clause.get("text", "")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch text for {clause_number}: {e}")
+            
+            # Build the payload with ALL required fields
             agiloft_payload = {
-                "clause_number": clause.get('number', ''),  # Critical field for matching
-                "clause_title": clause.get('title', ''),  # Just the title, without number prefix
-                "clause_text": clause.get("text", "") if clause.get("text") else f"See acquisition.gov for full text of {clause.get('number', '')}",
-                "clause_type": clause.get("type", "FAR"),  # FAR or DFARS
+                "clause_number": clause_number,
+                "clause_title": clause.get('title', f"Clause {clause_number}"),
+                "clause_text": clause_text if clause_text else f"See acquisition.gov for full text of {clause_number}",
+                "regulation": regulation,
+                "status": "Active"  # Required field - set to Active for new clauses
             }
             
-            # Remove any fields with empty values to avoid API errors
-            agiloft_payload = {k: v for k, v in agiloft_payload.items() if v}
+            logger.info(f"Uploading to Agiloft with payload keys: {list(agiloft_payload.keys())}")
+            logger.info(f"clause_number: {agiloft_payload['clause_number']}")
+            logger.info(f"clause_title: {agiloft_payload['clause_title'][:100]}")
+            logger.info(f"clause_text length: {len(agiloft_payload['clause_text'])} chars")
+            logger.info(f"regulation: {agiloft_payload['regulation']}")
+            logger.info(f"status: {agiloft_payload['status']}")
             
             try:
                 # Use create_clause to POST directly to /clause endpoint
