@@ -151,21 +151,35 @@ export default function SearchResults() {
       {/* Header */}
       <header className="bg-white/80 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 md:px-12">
-          <div className="flex items-center gap-4 h-16">
-            <Button 
-              variant="ghost" 
-              size="icon"
-              onClick={() => navigate(-1)}
-              className="hover:bg-slate-100"
-              data-testid="back-btn"
-            >
-              <ArrowLeft className="w-5 h-5 text-slate-600" />
-            </Button>
-            
-            <div className="flex items-center gap-2.5 cursor-pointer" onClick={() => navigate("/")}>
-              <ClauseGuardLogo className="w-8 h-8" variant="light" />
-              <span className="font-semibold text-xl text-slate-800 tracking-tight">ClauseGuard</span>
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center gap-4">
+              <Button 
+                variant="ghost" 
+                size="icon"
+                onClick={() => navigate(-1)}
+                className="hover:bg-slate-100"
+                data-testid="back-btn"
+              >
+                <ArrowLeft className="w-5 h-5 text-slate-600" />
+              </Button>
+              
+              <div className="flex items-center gap-2.5 cursor-pointer" onClick={() => navigate("/")}>
+                <ClauseGuardLogo className="w-8 h-8" variant="light" />
+                <span className="font-semibold text-xl text-slate-800 tracking-tight">ClauseGuard</span>
+              </div>
             </div>
+            
+            {isAuthenticated && (
+              <Button
+                variant="outline"
+                onClick={() => navigate("/dashboard")}
+                className="gap-2"
+                data-testid="dashboard-btn"
+              >
+                <LayoutDashboard className="w-4 h-4" />
+                Dashboard
+              </Button>
+            )}
           </div>
         </div>
       </header>
