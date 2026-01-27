@@ -238,19 +238,24 @@ export default function Dashboard({ user }) {
         </div>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-10">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4 mb-10">
           {quickActions.map((action, index) => (
             <button
               key={action.label}
-              onClick={action.onClick}
-              className="group modern-card p-5 text-left hover:border-teal-200 transition-all duration-200"
+              onClick={action.loading ? undefined : action.onClick}
+              disabled={action.loading}
+              className={`group modern-card p-5 text-left hover:border-teal-200 transition-all duration-200 ${action.loading ? 'opacity-75 cursor-wait' : ''}`}
               data-testid={`quick-action-${index}`}
             >
               <div className={`w-10 h-10 bg-gradient-to-br ${action.color} rounded-xl flex items-center justify-center mb-3 shadow-sm group-hover:scale-105 transition-transform`}>
-                <action.icon className="w-5 h-5 text-white" />
+                {action.loading ? (
+                  <Loader2 className="w-5 h-5 text-white animate-spin" />
+                ) : (
+                  <action.icon className="w-5 h-5 text-white" />
+                )}
               </div>
               <span className="font-medium text-slate-800 text-sm block">{action.label}</span>
-              <span className="text-xs text-slate-400">{action.desc}</span>
+              <span className="text-xs text-slate-400">{action.loading ? "Syncing..." : action.desc}</span>
             </button>
           ))}
         </div>
