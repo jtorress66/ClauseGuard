@@ -216,6 +216,17 @@ export default function ClauseDetail() {
             </div>
 
             <div className="flex items-center gap-2">
+              {isAuthenticated && (
+                <Button
+                  variant="outline"
+                  onClick={() => navigate("/dashboard")}
+                  className="gap-2"
+                  data-testid="dashboard-btn"
+                >
+                  <LayoutDashboard className="w-4 h-4" />
+                  Dashboard
+                </Button>
+              )}
               <Button
                 variant="outline"
                 onClick={toggleFavorite}
