@@ -479,18 +479,6 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
         return None
 
 
-# Keep old fetch method as fallback
-
-            # If direct URL fails, log the error
-            logger.warning(f"Failed to fetch {clause_number}: HTTP {response.status_code}")
-
-        return None
-    except Exception as e:
-        logger.error(f"Error fetching from acquisition.gov: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-
 async def fetch_far_index() -> List[Dict[str, str]]:
     """Fetch FAR clause index from acquisition.gov - improved to match reference implementation"""
     clauses = []
