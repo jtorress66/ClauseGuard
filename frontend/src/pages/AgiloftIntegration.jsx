@@ -418,22 +418,48 @@ export default function AgiloftIntegration({ user }) {
         })
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        toast.error(errorData.detail || "Upload failed");
-        return;
-      }
-      
       const result = await response.json();
       
+      // Log full result for debugging
+      console.log("Upload result:", result);
+      
       if (result.success || result.uploaded > 0) {
-        toast.success(`Uploaded ${result.uploaded} of ${result.total_requested} clauses`);
+        toast.success(`Uploaded ${result.uploaded} of ${result.total_valid || result.total_requested} clauses`);
         // Refresh comparison after upload
         compareClausesWithAgiloft();
       } else {
-        toast.error(result.message || "Upload failed");
+        // Show detailed error from Agiloft
+        let errorMessage = result.message || "Upload failed";
+        
+        if (result.errors && result.errors.length > 0) {
+          const firstError = result.errors[0];
+          errorMessage = firstError.error || errorMessage;
+          
+          // Show full Agiloft response if available
+          if (firstError.agiloft_response) {
+            console.error("Agiloft Error Response:", firstError.agiloft_response);
+            // Try to extract meaningful message
+            if (typeof firstError.agiloft_response === 'object') {
+              const agiloftErrors = firstError.agiloft_response.errors || [];
+              if (agiloftErrors.length > 0) {
+                errorMessage = agiloftErrors.map(e => e.message || e).join("; ");
+              }
+            }
+          }
+          
+          toast.error(`Agiloft Error: ${errorMessage}`, { duration: 10000 });
+        } else {
+          toast.error(errorMessage);
+        }
+      }
+      
+      // Show skipped clauses if any
+      if (result.skipped && result.skipped.length > 0) {
+        console.log("Skipped clauses:", result.skipped);
+        toast.info(`Skipped ${result.skipped.length} clauses (Reserved or invalid)`);
       }
     } catch (error) {
+      console.error("Upload exception:", error);
       toast.error(`Upload failed: ${error.message}`);
     } finally {
       setUploading(false);
