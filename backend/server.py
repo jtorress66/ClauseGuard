@@ -209,7 +209,7 @@ async def get_ai_response(prompt: str, system_message: str = "You are a helpful 
 # ==================== Acquisition.gov Integration ====================
 
 async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict[str, Any]]:
-    """Fetch clause details from acquisition.gov with full text extraction"""
+    """Fetch clause details from acquisition.gov with full text extraction using HTTP requests only"""
     try:
         from bs4 import BeautifulSoup
         import re
@@ -226,9 +226,17 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
             # FAR clauses are at acquisition.gov/far/52.xxx-xx
             clause_url = f"https://www.acquisition.gov/far/{clause_number.lower()}"
 
+        logger.info(f"Fetching clause from: {clause_url}")
+
         async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-            # Try direct clause URL first
+            # Add proper headers to mimic browser
+            client.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            })
+            
             response = await client.get(clause_url)
+            logger.info(f"Response status: {response.status_code}")
 
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
@@ -242,6 +250,8 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                     title = re.sub(r'^(FAR|DFARS)\s*', '', title_text)
                     title = re.sub(r'^\d+\.\d+-\d+\s*', '', title)
                     title = title.replace('| Acquisition.GOV', '').strip()
+                    # Remove leading dash or hyphen
+                    title = re.sub(r'^[-–—]\s*', '', title).strip()
 
                 if not title:
                     h1 = soup.find('h1')
@@ -249,26 +259,39 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                         title = h1.get_text().strip()
                         title = re.sub(r'^\d+\.\d+-\d+\s*', '', title)
 
-                # Extract full clause text from the main content area
+                # Extract clause text from the article body
+                # acquisition.gov uses <article class="nested0"> for main content
                 text_parts = []
+                
+                # Look for the main article content
+                main_article = soup.find('article', class_='nested0')
+                if not main_article:
+                    main_article = soup.find('article')
+                
+                if main_article:
+                    # Find the body div within the article
+                    body_div = main_article.find('div', class_='body')
+                    if body_div:
+                        # Get all paragraph content
+                        for elem in body_div.find_all(['p', 'li']):
+                            text = elem.get_text(' ', strip=True)
+                            # Clean up the text
+                            text = re.sub(r'\s+', ' ', text)
+                            if text and len(text) > 10:
+                                text_parts.append(text)
+                    else:
+                        # Fallback: get text from entire article
+                        for elem in main_article.find_all(['p', 'li']):
+                            text = elem.get_text(' ', strip=True)
+                            text = re.sub(r'\s+', ' ', text)
+                            if text and len(text) > 10:
+                                text_parts.append(text)
 
-                # Look for the main content div
-                main_content = soup.find('div', class_='field--name-body') or \
-                               soup.find('article') or \
-                               soup.find('main') or \
-                               soup.find('div', class_='content')
-
-                if main_content:
-                    # Get all paragraphs, lists, and text content
-                    for elem in main_content.find_all(['p', 'li', 'div', 'span']):
-                        text = elem.get_text().strip()
-                        if text and len(text) > 10:  # Filter out very short fragments
-                            text_parts.append(text)
-
-                # If no main content found, try getting all paragraphs
+                # If still no content, try broader search
                 if not text_parts:
                     for p in soup.find_all('p'):
-                        text = p.get_text().strip()
+                        text = p.get_text(' ', strip=True)
+                        text = re.sub(r'\s+', ' ', text)
                         if text and len(text) > 20:
                             text_parts.append(text)
 
@@ -285,6 +308,14 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                         seen.add(line_clean)
                         unique_lines.append(line)
                 full_text = "\n".join(unique_lines)[:50000]  # Limit to 50KB
+
+                logger.info(f"Extracted title: {title[:80] if title else 'N/A'}...")
+                logger.info(f"Extracted text length: {len(full_text)} chars")
+                
+                # Skip if this is a reserved clause
+                if "[reserved]" in title.lower() or "[reserved]" in full_text.lower():
+                    logger.info(f"Clause {clause_number} is reserved - skipping")
+                    return None
 
                 # Extract keywords from text
                 keywords = []
@@ -309,7 +340,7 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                     "number": clause_number,
                     "title": title or f"Clause {clause_number}",
                     "type": clause_type,
-                    "text": full_text or f"Content available at: {clause_url}",
+                    "text": full_text if full_text and len(full_text) > 100 else f"Content available at: {clause_url}",
                     "summary": None,
                     "flowdown_required": flowdown_required,
                     "contract_types": [],
@@ -320,12 +351,14 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                     "source_url": clause_url
                 }
 
-            # If direct URL fails, try the part page
-            logger.info(f"Direct URL failed for {clause_number}, trying part page")
+            # If direct URL fails, log the error
+            logger.warning(f"Failed to fetch {clause_number}: HTTP {response.status_code}")
 
         return None
     except Exception as e:
         logger.error(f"Error fetching from acquisition.gov: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 async def fetch_far_index() -> List[Dict[str, str]]:
