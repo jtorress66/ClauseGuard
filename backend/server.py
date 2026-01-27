@@ -2892,7 +2892,7 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
             clause_type = clause.get("type", "FAR")
             clause_number = clause.get('number', '')
             
-            # Determine regulation based on clause type
+            # Determine regulation based on clause type (FAR or DFARS)
             regulation = "FAR" if clause_type == "FAR" else "DFARS"
             
             # Get full text - fetch from acquisition.gov if missing
@@ -2907,6 +2907,7 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
                     logger.warning(f"Failed to fetch text for {clause_number}: {e}")
             
             # Build the payload with ALL required fields
+            # Note: Agiloft uses "type" not "clause_type" based on API response
             agiloft_payload = {
                 "clause_number": clause_number,
                 "clause_title": clause.get('title', f"Clause {clause_number}"),
