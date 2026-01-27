@@ -2895,52 +2895,22 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
         uploaded_count = 0
         errors_list = []
         
+        from datetime import datetime
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        
         for clause in clauses_to_upload:
-            # Map fields to Agiloft format based on OpenAPI JSON schema
-            # Using UPSERT endpoint: POST /clause/upsert?lang=en&query=clause_number~='value'
-            # 
-            # IMPORTANT: Agiloft has a UNIQUE constraint on clause_title
-            # So we only send clause_text and clause_date in the body for updates
-            # The clause_number identifies the record via query param
-            clause_type = clause.get("type", "FAR")
             clause_number = clause.get('number', '')
             clause_title = clause.get('title', f"Clause {clause_number}")
+            clause_text = clause.get('text', '')
             
-            # Get full text - fetch from acquisition.gov if missing
-            clause_text = clause.get("text", "")
-            if not clause_text or len(clause_text) < 500:
-                try:
-                    logger.info(f"Fetching full text for {clause_number} before upload...")
-                    live_clause = await fetch_clause_from_acquisition_gov(clause_number)
-                    if live_clause and live_clause.get("text"):
-                        clause_text = live_clause.get("text", "")
-                        clause_title = live_clause.get("title", clause_title)
-                except Exception as e:
-                    logger.warning(f"Failed to fetch text for {clause_number}: {e}")
-            
-            # Build the payload - for NEW records, include clause_title
-            # For existing records, the title causes uniqueness error, so we skip it
-            from datetime import datetime
-            current_date = datetime.now().strftime("%Y-%m-%d")
-            
-            # First, check if clause exists in Agiloft by searching
-            clause_exists = await agiloft_client.check_clause_exists(clause_number)
-            
-            if clause_exists:
-                # Clause exists - only update text and date (NOT title to avoid uniqueness error)
-                logger.info(f"Clause {clause_number} exists in Agiloft - updating text and date only")
-                agiloft_payload = {
-                    "clause_text": clause_text if clause_text else f"See acquisition.gov for full text of {clause_number}",
-                    "clause_date": current_date
-                }
-            else:
-                # Clause is new - include all fields including title
-                logger.info(f"Clause {clause_number} is NEW - including title, text, and date")
-                agiloft_payload = {
-                    "clause_title": clause_title,
-                    "clause_text": clause_text if clause_text else f"See acquisition.gov for full text of {clause_number}",
-                    "clause_date": current_date
-                }
+            # Build payload with ALL required fields for POST /clause
+            # Based on OpenAPI schema: clause_number, clause_title, clause_text, clause_date
+            agiloft_payload = {
+                "clause_number": clause_number,  # Required - identifies the clause
+                "clause_title": clause_title,    # Required - unique field
+                "clause_text": clause_text,      # Required - the actual clause content
+                "clause_date": current_date      # Required - date field
+            }
             
             logger.info(f"=== UPLOADING CLAUSE {clause_number} ===")
             logger.info(f"Using upsert endpoint with query: clause_number~='{clause_number}'")
