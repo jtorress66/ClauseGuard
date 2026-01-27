@@ -1,0 +1,103 @@
+{
+  "summary": "Tested and fixed multiple bug fixes for ClauseGuard app. Fixed MongoDB ObjectId serialization issues in annotations, saved-searches, and favorites endpoints. All 19 backend tests pass. All frontend UI tests pass including Dashboard button visibility, AI toggle behavior, PDF export, and note saving.",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  
+  "bugs_fixed_this_iteration": [
+    {
+      "bug": "MongoDB ObjectId serialization error in POST /api/user/annotations",
+      "file": "/app/backend/server.py",
+      "fix": "Added ann_dict.pop('_id', None) after insert_one to remove MongoDB _id before returning",
+      "line": "1469-1471"
+    },
+    {
+      "bug": "MongoDB ObjectId serialization error in POST /api/user/saved-searches",
+      "file": "/app/backend/server.py",
+      "fix": "Added search_dict.pop('_id', None) after insert_one and removed duplicate return statement",
+      "line": "1384-1386"
+    },
+    {
+      "bug": "MongoDB ObjectId serialization error in POST /api/user/favorites",
+      "file": "/app/backend/server.py",
+      "fix": "Added fav_dict.pop('_id', None) after insert_one to remove MongoDB _id before returning",
+      "line": "1434-1437"
+    }
+  ],
+  
+  "passed_tests": [
+    "API root endpoint returns correct response",
+    "User registration flow works",
+    "User login flow works (auth/me endpoint)",
+    "POST /api/user/annotations - Create annotation (Bug #1 FIXED)",
+    "GET /api/user/annotations - Get annotations",
+    "DELETE /api/user/annotations/{id} - Delete annotation",
+    "POST /api/export/pdf with {clauses: [...]} body (Bug #2 FIXED)",
+    "POST /api/export/pdf with empty clauses array",
+    "POST /api/export/pdf requires authentication",
+    "POST /api/user/saved-searches?query=xxx (Bug #3 FIXED)",
+    "GET /api/user/saved-searches",
+    "DELETE /api/user/saved-searches/{id}",
+    "POST /api/user/saved-searches without query returns 400",
+    "Regular clause search works",
+    "Search with type filter works",
+    "AI search requires authentication",
+    "AI search works when authenticated",
+    "POST /api/user/favorites - Add favorite",
+    "GET /api/user/favorites - Get favorites",
+    "Dashboard button visible on SearchResults page (Bug #5 FIXED)",
+    "Dashboard button visible on ClauseDetail page (Bug #5 FIXED)",
+    "Dashboard button visible on AgiloftIntegration page (Bug #5 FIXED)",
+    "AI toggle does NOT auto-trigger search (Bug #4 FIXED)",
+    "PDF export downloads successfully from ClauseDetail page"
+  ],
+  
+  "test_report_links": [
+    "/app/backend/tests/test_bug_fixes.py",
+    "/app/test_reports/pytest/bug_fixes_results.xml"
+  ],
+  
+  "action_items": [],
+  
+  "critical_code_review_comments": [
+    "Reserved clause filtering is implemented in /app/backend/acqgov_scraper.py - lines 189-191, 224-226, 388-390, 425-427 check for 'reserved' in title and skip those clauses",
+    "The upload-missing-clauses endpoint uses create_clause (not upsert_clause) as mentioned in the bug fix notes"
+  ],
+  
+  "updated_files": [
+    "/app/backend/server.py",
+    "/app/backend/tests/test_bug_fixes.py"
+  ],
+  
+  "success_rate": {
+    "backend": "100% (19/19 tests passed)",
+    "frontend": "100% (All UI tests passed)"
+  },
+  
+  "test_credentials": "Created test users: bugfix_test_*, annotation_test_*, pdf_test_*, search_test_*, ai_test_*, fav_test_*, uitest_*",
+  
+  "seed_data_creation": "None - used existing clause data",
+  
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  
+  "context_for_next_testing_agent": "All reported bugs have been fixed and tested: 1) Note saving works (MongoDB _id fix), 2) PDF export works with JSON body, 3) Save search works (MongoDB _id fix), 4) AI toggle no longer auto-triggers search, 5) Dashboard button appears on all three pages when authenticated, 6) Reserved clause filtering is implemented in acqgov_scraper.py. The upload-missing-clauses endpoint was not directly tested as it requires Agiloft credentials.",
+  
+  "verification_notes": {
+    "bug_1_notes": "Fixed - POST /api/user/annotations now returns proper JSON without MongoDB _id",
+    "bug_2_pdf_export": "Fixed - POST /api/export/pdf accepts {clauses: [...]} JSON body and returns PDF",
+    "bug_3_save_search": "Fixed - POST /api/user/saved-searches?query=xxx works correctly",
+    "bug_4_ai_toggle": "Fixed - AI toggle only changes mode, does not trigger search",
+    "bug_5_dashboard_button": "Fixed - Dashboard button visible on SearchResults, ClauseDetail, and AgiloftIntegration pages when authenticated",
+    "bug_6_reserved_clauses": "Verified - acqgov_scraper.py filters out clauses with 'reserved' in title",
+    "bug_7_upload_missing": "Not directly tested - requires Agiloft credentials"
+  }
+}
