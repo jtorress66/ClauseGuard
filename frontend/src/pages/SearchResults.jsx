@@ -171,6 +171,7 @@ export default function SearchResults() {
             
             {isAuthenticated && (
               <Button
+                type="button"
                 variant="outline"
                 onClick={() => navigate("/dashboard")}
                 className="gap-2"
