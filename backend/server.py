@@ -2942,7 +2942,9 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
             "success": uploaded_count > 0,
             "message": f"Uploaded {uploaded_count} of {len(clauses_to_upload)} clauses to Agiloft",
             "uploaded": uploaded_count,
-            "total_requested": len(clauses_to_upload),
+            "total_requested": len(upload_request.clause_numbers),
+            "total_valid": len(clauses_to_upload),
+            "skipped": skipped_clauses,
             "errors": errors_list
         }
             
