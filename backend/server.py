@@ -2887,13 +2887,10 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
         errors_list = []
         
         for clause in clauses_to_upload:
-            # Map fields to Agiloft format - REQUIRED fields per user specification:
-            # clause_number, clause_title, clause_text, regulation, status
+            # Map fields to Agiloft format based on OpenAPI JSON schema
+            # REQUIRED fields: clause_title, clause_text, clause_number, clause_date
             clause_type = clause.get("type", "FAR")
             clause_number = clause.get('number', '')
-            
-            # Determine regulation based on clause type (FAR or DFARS)
-            regulation = "FAR" if clause_type == "FAR" else "DFARS"
             
             # Get full text - fetch from acquisition.gov if missing
             clause_text = clause.get("text", "")
@@ -2906,22 +2903,23 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
                 except Exception as e:
                     logger.warning(f"Failed to fetch text for {clause_number}: {e}")
             
-            # Build the payload with ALL required fields
-            # Note: Agiloft uses "type" not "clause_type" based on API response
+            # Build the payload with REQUIRED fields per OpenAPI schema:
+            # clause_title (VARCHAR), clause_text (LONG VARCHAR), clause_number (LONG VARCHAR), clause_date (LONG VARCHAR)
+            from datetime import datetime
+            current_date = datetime.now().strftime("%Y-%m-%d")
+            
             agiloft_payload = {
                 "clause_number": clause_number,
                 "clause_title": clause.get('title', f"Clause {clause_number}"),
                 "clause_text": clause_text if clause_text else f"See acquisition.gov for full text of {clause_number}",
-                "regulation": regulation,
-                "status": "Active"  # Required field - set to Active for new clauses
+                "clause_date": current_date  # Required field - use current date for new imports
             }
             
-            logger.info(f"Uploading to Agiloft with payload keys: {list(agiloft_payload.keys())}")
-            logger.info(f"clause_number: {agiloft_payload['clause_number']}")
-            logger.info(f"clause_title: {agiloft_payload['clause_title'][:100]}")
-            logger.info(f"clause_text length: {len(agiloft_payload['clause_text'])} chars")
-            logger.info(f"regulation: {agiloft_payload['regulation']}")
-            logger.info(f"status: {agiloft_payload['status']}")
+            logger.info(f"Uploading to Agiloft - Required fields per OpenAPI schema:")
+            logger.info(f"  clause_number: {agiloft_payload['clause_number']}")
+            logger.info(f"  clause_title: {agiloft_payload['clause_title'][:100]}")
+            logger.info(f"  clause_text length: {len(agiloft_payload['clause_text'])} chars")
+            logger.info(f"  clause_date: {agiloft_payload['clause_date']}")
             
             try:
                 # Use create_clause to POST directly to /clause endpoint
