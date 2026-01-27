@@ -3095,23 +3095,37 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
         from datetime import datetime
         current_date = datetime.now().strftime("%Y-%m-%d")
         
+        # Get clause_type IDs for FAR and DFARS
+        far_type_id = await agiloft_client.get_clause_type_id("FAR")
+        dfars_type_id = await agiloft_client.get_clause_type_id("DFARS")
+        logger.info(f"Clause type IDs - FAR: {far_type_id}, DFARS: {dfars_type_id}")
+        
         for clause in clauses_to_upload:
             clause_number = clause.get('number', '')
             clause_title = clause.get('title', f"Clause {clause_number}")
             clause_text = clause.get('text', '')
+            clause_type = clause.get('type', 'FAR')  # FAR or DFARS
             
             # Build payload with ALL required fields for POST /clause
-            # Based on OpenAPI schema: clause_number, clause_title, clause_text, clause_date
+            # Based on OpenAPI schema: clause_number, clause_title, clause_text, clause_date, type
             agiloft_payload = {
                 "clause_number": clause_number,  # Required - identifies the clause
-                "clause_title": clause_title,    # Required - unique field
+                "clause_title": clause_title,    # Required - clause title
                 "clause_text": clause_text,      # Required - the actual clause content
                 "clause_date": current_date      # Required - date field
             }
             
+            # Add clause_type ID if available
+            if clause_type == "FAR" and far_type_id:
+                agiloft_payload["type"] = far_type_id
+            elif clause_type == "DFARS" and dfars_type_id:
+                agiloft_payload["type"] = dfars_type_id
+            
             logger.info(f"=== UPLOADING {clause_number} ===")
+            logger.info(f"Type: {clause_type} (ID: {agiloft_payload.get('type', 'N/A')})")
             logger.info(f"Title: {clause_title[:80]}...")
             logger.info(f"Text length: {len(clause_text)} chars")
+            logger.info(f"Text preview: {clause_text[:200]}..." if clause_text else "No text")
             logger.info(f"Date: {current_date}")
             
             try:
