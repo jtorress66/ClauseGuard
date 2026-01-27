@@ -477,6 +477,7 @@ export default function AgiloftIntegration({ user }) {
               </div>
             </div>
             <Button
+              type="button"
               variant="outline"
               onClick={() => navigate("/dashboard")}
               className="gap-2"
