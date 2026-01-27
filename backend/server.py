@@ -1373,13 +1373,16 @@ async def get_saved_searches(request: Request):
     return {"saved_searches": searches}
 
 @user_router.post("/saved-searches")
-async def save_search(query: str, filters: Dict[str, Any] = {}, request: Request = None):
+async def save_search(request: Request, query: str = None, filters: Dict[str, Any] = {}):
     """Save a search"""
     user = await require_auth(request)
+    if not query:
+        raise HTTPException(status_code=400, detail="Query parameter required")
     search = SavedSearch(user_id=user.user_id, query=query, filters=filters)
     search_dict = search.model_dump()
     search_dict["created_at"] = search_dict["created_at"].isoformat()
     await db.saved_searches.insert_one(search_dict)
+    return search_dict
     return search_dict
 
 @user_router.delete("/saved-searches/{search_id}")
