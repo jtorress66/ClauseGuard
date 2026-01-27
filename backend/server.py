@@ -2808,12 +2808,14 @@ class UploadMissingClausesRequest(BaseModel):
 
 @agiloft_router.post("/upload-missing-clauses")
 async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClausesRequest, request: Request):
-    """Upload specified missing clauses from acquisition.gov to Agiloft KB
+    """Upload specified missing clauses to Agiloft KB using POST /clause endpoint.
     
     This endpoint:
     1. Takes a list of clause numbers identified as missing in Agiloft
-    2. Fetches data from acquisition.gov (always - since comparison data comes from there)
-    3. Creates the clauses in Agiloft's clause library using the new AgiloftClient
+    2. Fetches full clause data from acquisition.gov (using HTTP, not Playwright)
+    3. Creates the clauses in Agiloft using POST /clause with required fields
+    
+    Required fields for POST /clause: clause_number, clause_title, clause_text, clause_date
     """
     user = await require_auth(request)
     
