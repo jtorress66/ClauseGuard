@@ -262,6 +262,59 @@ class AgiloftClient:
                 logger.error(f"Error checking clause exists: {e}")
                 return False
     
+    async def get_clause_type_id(self, clause_type_name: str) -> Optional[int]:
+        """
+        Get the clause_type ID from Agiloft for a given type name (FAR or DFARS).
+        
+        Uses: POST /clause_type/search to find the type by name
+        Returns: The ID of the clause type, or None if not found
+        """
+        if not self.token:
+            if not await self.login():
+                return None
+        
+        url = f"{self.base_url}/clause_type/search"
+        
+        # Search for clause type by name
+        payload = {
+            "search": "",
+            "field": ["id", "name"],
+            "query": f"name~='{clause_type_name}'"
+        }
+        
+        logger.info(f"Looking up clause_type ID for: {clause_type_name}")
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.post(
+                    url,
+                    params={"lang": "en"},
+                    json=payload,
+                    headers=self._get_auth_headers()
+                )
+                
+                logger.info(f"clause_type search response: {response.status_code} - {response.text[:500]}")
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    success = data.get("success", False)
+                    
+                    if success:
+                        result = data.get("result", [])
+                        if isinstance(result, list) and len(result) > 0:
+                            # Get the first matching result
+                            type_record = result[0]
+                            type_id = type_record.get("id")
+                            logger.info(f"Found clause_type ID {type_id} for '{clause_type_name}'")
+                            return type_id
+                    
+                logger.warning(f"Could not find clause_type for '{clause_type_name}'")
+                return None
+                    
+            except Exception as e:
+                logger.error(f"Error getting clause_type ID: {e}")
+                return None
+    
     async def search_clauses(self, select_fields: Optional[List[str]] = None, 
                              top: int = 5000) -> List[Dict]:
         """
