@@ -2749,18 +2749,21 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
         errors_list = []
         
         for clause in clauses_to_upload:
-            # Map fields to Agiloft format - MUST include clause_number for matching
+            # Map fields to Agiloft format based on OpenAPI spec
+            # Fields: clause_number, clause_title, clause_text, clause_type
             agiloft_payload = {
-                "clause_number": clause.get('number', ''),  # Critical field for comparison
-                "clause_title": f"{clause.get('number', '')} - {clause.get('title', '')}",
-                "clause_text": clause.get("text", "")[:50000] if clause.get("text") else f"See acquisition.gov for full text of {clause.get('number', '')}",
+                "clause_number": clause.get('number', ''),  # Critical field for matching
+                "clause_title": clause.get('title', ''),  # Just the title, without number prefix
+                "clause_text": clause.get("text", "") if clause.get("text") else f"See acquisition.gov for full text of {clause.get('number', '')}",
                 "clause_type": clause.get("type", "FAR"),  # FAR or DFARS
-                "guidance": clause.get("summary", "") or f"Clause from acquisition.gov: {clause.get('number', '')}",
             }
             
+            # Remove any fields with empty values to avoid API errors
+            agiloft_payload = {k: v for k, v in agiloft_payload.items() if v}
+            
             try:
-                # Use upsert to create or update the clause
-                result = await agiloft_client.upsert_clause(agiloft_payload, query_field="clause_number")
+                # Use create_clause to POST directly to /clause endpoint
+                result = await agiloft_client.create_clause(agiloft_payload)
                 
                 if result.get("success"):
                     uploaded_count += 1
