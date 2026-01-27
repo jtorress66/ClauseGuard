@@ -430,8 +430,17 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                 logger.info(f"Extracted title: {title[:80] if title else 'N/A'}...")
                 logger.info(f"Extracted text length: {len(full_text)} chars")
                 
-                # Skip if this is a reserved clause
-                if "[reserved]" in title.lower() or "[reserved]" in full_text.lower():
+                # Skip ONLY if the clause itself is reserved (not navigation links)
+                # Reserved clauses have titles like "52.204-5 Reserved" or "[Reserved]"
+                title_lower = title.lower() if title else ""
+                is_reserved = (
+                    title_lower.endswith("reserved") or
+                    title_lower.endswith("[reserved]") or
+                    title_lower == "reserved" or
+                    "is reserved" in title_lower
+                )
+                
+                if is_reserved:
                     logger.info(f"Clause {clause_number} is reserved - skipping")
                     return None
 
