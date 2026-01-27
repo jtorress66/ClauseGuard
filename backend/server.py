@@ -2888,7 +2888,9 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
         
         for clause in clauses_to_upload:
             # Map fields to Agiloft format based on OpenAPI JSON schema
-            # REQUIRED fields: clause_title, clause_text, clause_number, clause_date
+            # Using UPSERT endpoint: POST /clause/upsert?lang=en&query=clause_number~='value'
+            # Required body fields: clause_text, clause_date
+            # The clause_number goes in the query param, NOT in the body
             clause_type = clause.get("type", "FAR")
             clause_number = clause.get('number', '')
             
@@ -2903,27 +2905,24 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
                 except Exception as e:
                     logger.warning(f"Failed to fetch text for {clause_number}: {e}")
             
-            # Build the payload with REQUIRED fields per OpenAPI schema:
-            # clause_title (VARCHAR), clause_text (LONG VARCHAR), clause_number (LONG VARCHAR), clause_date (LONG VARCHAR)
+            # Build the payload - clause_number is in query param, NOT in body
             from datetime import datetime
             current_date = datetime.now().strftime("%Y-%m-%d")
             
+            # Body contains only the fields to set (clause_number is in query)
             agiloft_payload = {
-                "clause_number": clause_number,
                 "clause_title": clause.get('title', f"Clause {clause_number}"),
                 "clause_text": clause_text if clause_text else f"See acquisition.gov for full text of {clause_number}",
-                "clause_date": current_date  # Required field - use current date for new imports
+                "clause_date": current_date
             }
             
-            logger.info(f"Uploading to Agiloft - Required fields per OpenAPI schema:")
-            logger.info(f"  clause_number: {agiloft_payload['clause_number']}")
-            logger.info(f"  clause_title: {agiloft_payload['clause_title'][:100]}")
-            logger.info(f"  clause_text length: {len(agiloft_payload['clause_text'])} chars")
-            logger.info(f"  clause_date: {agiloft_payload['clause_date']}")
+            logger.info(f"=== UPLOADING CLAUSE {clause_number} ===")
+            logger.info(f"Using upsert endpoint with query: clause_number~='{clause_number}'")
+            logger.info(f"Body fields: {list(agiloft_payload.keys())}")
             
             try:
-                # Use create_clause to POST directly to /clause endpoint
-                result = await agiloft_client.create_clause(agiloft_payload)
+                # Use upsert_clause - clause_number goes in query param
+                result = await agiloft_client.upsert_clause(agiloft_payload, clause_number)
                 
                 if result.get("success"):
                     uploaded_count += 1
