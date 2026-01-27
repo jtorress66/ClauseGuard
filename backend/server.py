@@ -2866,9 +2866,10 @@ async def upload_missing_clauses_to_agiloft(upload_request: UploadMissingClauses
     if not clauses_to_upload:
         return {
             "success": False,
-            "message": f"No clauses could be found or fetched. Errors: {'; '.join(fetch_errors) if fetch_errors else 'Unknown error'}",
+            "message": "No valid clauses to upload",
             "uploaded": 0,
-            "errors": fetch_errors
+            "skipped": skipped_clauses,
+            "errors": []
         }
     
     try:
