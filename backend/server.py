@@ -1467,6 +1467,8 @@ async def create_annotation(annotation_data: AnnotationCreate, request: Request)
     ann_dict = annotation.model_dump()
     ann_dict["created_at"] = ann_dict["created_at"].isoformat()
     await db.annotations.insert_one(ann_dict)
+    # Remove MongoDB _id before returning
+    ann_dict.pop("_id", None)
     return ann_dict
 
 @user_router.delete("/annotations/{annotation_id}")
