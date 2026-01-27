@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Search, Star, ArrowLeft, Sparkles, Save, BookOpen, ExternalLink, Database, Loader2 } from "lucide-react";
+import { Search, Star, ArrowLeft, Sparkles, Save, BookOpen, ExternalLink, Database, Loader2, LayoutDashboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
