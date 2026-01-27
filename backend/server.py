@@ -1432,6 +1432,8 @@ async def add_favorite(clause_id: str, request: Request):
     fav_dict = favorite.model_dump()
     fav_dict["created_at"] = fav_dict["created_at"].isoformat()
     await db.favorites.insert_one(fav_dict)
+    # Remove MongoDB _id before returning
+    fav_dict.pop("_id", None)
     return fav_dict
 
 @user_router.delete("/favorites/{clause_id}")
