@@ -218,6 +218,7 @@ export default function ClauseDetail() {
             <div className="flex items-center gap-2">
               {isAuthenticated && (
                 <Button
+                  type="button"
                   variant="outline"
                   onClick={() => navigate("/dashboard")}
                   className="gap-2"
@@ -228,6 +229,7 @@ export default function ClauseDetail() {
                 </Button>
               )}
               <Button
+                type="button"
                 variant="outline"
                 onClick={toggleFavorite}
                 className={isFavorite ? "text-amber-500 border-amber-300" : ""}
@@ -236,7 +238,7 @@ export default function ClauseDetail() {
                 <Star className={`w-4 h-4 mr-2 ${isFavorite ? "fill-amber-500" : ""}`} />
                 {isFavorite ? "Saved" : "Save"}
               </Button>
-              <Button variant="outline" onClick={exportToPdf} data-testid="export-btn">
+              <Button type="button" variant="outline" onClick={exportToPdf} data-testid="export-btn">
                 <Download className="w-4 h-4 mr-2" />
                 Export PDF
               </Button>
