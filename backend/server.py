@@ -1143,6 +1143,82 @@ async def sync_clauses_from_acquisition_gov(
         "clause_type": clause_type or "all"
     }
 
+@clauses_router.post("/sync-full-text")
+async def sync_clauses_full_text(request: Request, limit: int = 50):
+    """Sync full text for clauses from acquisition.gov.
+    
+    This fetches the complete clause text for clauses that are missing it.
+    Call this to ensure PDF exports have full text content.
+    
+    Args:
+        limit: Maximum number of clauses to sync in one call (default 50)
+    """
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    # Find clauses missing full text
+    clauses_without_text = await db.clauses.find({
+        "$or": [
+            {"text": {"$exists": False}},
+            {"text": None},
+            {"text": ""},
+            {"text": {"$regex": "^Full text available"}},
+            {"text": {"$regex": "^See acquisition.gov"}}
+        ]
+    }, {"_id": 0, "number": 1, "title": 1, "type": 1}).to_list(limit)
+    
+    if not clauses_without_text:
+        return {
+            "success": True,
+            "message": "All clauses already have full text",
+            "synced": 0,
+            "failed": 0,
+            "total_checked": 0
+        }
+    
+    synced_count = 0
+    failed_count = 0
+    failed_clauses = []
+    
+    for clause in clauses_without_text:
+        clause_num = clause.get("number")
+        if not clause_num:
+            continue
+            
+        try:
+            logger.info(f"Fetching full text for {clause_num}...")
+            live_clause = await fetch_clause_from_acquisition_gov(clause_num)
+            
+            if live_clause and live_clause.get("text"):
+                await db.clauses.update_one(
+                    {"number": clause_num},
+                    {"$set": {
+                        "text": live_clause.get("text", ""),
+                        "title": live_clause.get("title", clause.get("title", "")),
+                        "last_updated": datetime.now(timezone.utc).isoformat()
+                    }}
+                )
+                synced_count += 1
+                logger.info(f"Successfully synced full text for {clause_num}")
+            else:
+                failed_count += 1
+                failed_clauses.append(clause_num)
+                logger.warning(f"No text found for {clause_num}")
+        except Exception as e:
+            failed_count += 1
+            failed_clauses.append(clause_num)
+            logger.error(f"Failed to sync {clause_num}: {e}")
+    
+    return {
+        "success": True,
+        "message": f"Synced full text for {synced_count} clauses, {failed_count} failed",
+        "synced": synced_count,
+        "failed": failed_count,
+        "total_checked": len(clauses_without_text),
+        "failed_clauses": failed_clauses[:10]  # Only return first 10 failed
+    }
+
 # ==================== Contracts Routes ====================
 
 @contracts_router.post("/upload")
