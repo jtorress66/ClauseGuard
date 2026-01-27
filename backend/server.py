@@ -209,27 +209,171 @@ async def get_ai_response(prompt: str, system_message: str = "You are a helpful 
 # ==================== Acquisition.gov Integration ====================
 
 async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict[str, Any]]:
-    """Fetch clause details from acquisition.gov with full text extraction using HTTP requests only"""
+    """Fetch clause details from acquisition.gov with proper formatting preservation.
+    
+    Based on the desktop app's Federal_Clauses_Downloader.py logic:
+    - Uses BeautifulSoup for HTML parsing
+    - Preserves indentation from lists, CSS styles, and class attributes
+    - Properly handles nested lists and paragraphs
+    """
     try:
-        from bs4 import BeautifulSoup
+        from bs4 import BeautifulSoup, Tag
         import re
+
+        # Constants for indentation (from desktop app)
+        INDENT_SPACES = 4
+        
+        def _norm_spaces(s: str) -> str:
+            """Normalize Unicode spaces to regular spaces"""
+            return s.replace('\u00A0', ' ').replace('\u202F', ' ').replace('\xa0', ' ')
+        
+        def _get_list_depth(tag: Tag) -> int:
+            """Calculate how deep a tag is in nested lists"""
+            depth = 0
+            parent = tag.parent
+            while parent:
+                if parent.name in ('ul', 'ol', 'dl'):
+                    depth += 1
+                parent = parent.parent
+            return depth
+        
+        def _get_style_indent(tag: Tag) -> int:
+            """Extract indentation level from style attribute"""
+            style = tag.get('style', '')
+            if not style:
+                return 0
+            
+            # Look for margin-left or text-indent
+            indent = 0
+            margin_match = re.search(r'margin-left:\s*(\d+(?:\.\d+)?)(em|px)', style)
+            if margin_match:
+                value = float(margin_match.group(1))
+                unit = margin_match.group(2)
+                if unit == 'em':
+                    indent = int(value)
+                elif unit == 'px':
+                    indent = int(value / 16)  # Approximate em conversion
+            return indent
+        
+        def _get_class_indent(tag: Tag) -> int:
+            """Extract indentation from class names like 'indent1', 'list2'"""
+            classes = tag.get('class', [])
+            if isinstance(classes, str):
+                classes = classes.split()
+            for cls in classes:
+                match = re.search(r'(?:indent|list)(\d+)', cls)
+                if match:
+                    return int(match.group(1))
+            return 0
+        
+        def text_with_indents(root: Tag) -> str:
+            """Extract text from HTML while preserving indentation structure.
+            
+            Based on the desktop app's text_with_indents function.
+            """
+            lines = []
+            
+            def process_element(elem, base_indent=0):
+                if isinstance(elem, str):
+                    text = _norm_spaces(elem.strip())
+                    if text:
+                        lines.append(' ' * (base_indent * INDENT_SPACES) + text)
+                    return
+                
+                if not isinstance(elem, Tag):
+                    return
+                
+                # Skip non-content elements
+                if elem.name in ('script', 'style', 'nav', 'aside', 'footer', 'button'):
+                    return
+                
+                # Calculate indentation
+                list_depth = _get_list_depth(elem)
+                style_indent = _get_style_indent(elem)
+                class_indent = _get_class_indent(elem)
+                indent = base_indent + max(list_depth, style_indent, class_indent)
+                
+                # Handle different element types
+                if elem.name in ('ul', 'ol'):
+                    # Process list items with increased indentation
+                    for li in elem.find_all('li', recursive=False):
+                        process_element(li, indent)
+                
+                elif elem.name == 'li':
+                    # Get list item text and any nested content
+                    # First, get direct text
+                    direct_text = []
+                    for child in elem.children:
+                        if isinstance(child, str):
+                            text = _norm_spaces(child.strip())
+                            if text:
+                                direct_text.append(text)
+                        elif child.name not in ('ul', 'ol', 'dl'):
+                            text = _norm_spaces(child.get_text(' ', strip=True))
+                            if text:
+                                direct_text.append(text)
+                    
+                    if direct_text:
+                        lines.append(' ' * (indent * INDENT_SPACES) + ' '.join(direct_text))
+                    
+                    # Process nested lists
+                    for nested in elem.find_all(['ul', 'ol'], recursive=False):
+                        process_element(nested, indent + 1)
+                
+                elif elem.name == 'p':
+                    text = _norm_spaces(elem.get_text(' ', strip=True))
+                    if text:
+                        lines.append(' ' * (indent * INDENT_SPACES) + text)
+                        lines.append('')  # Add blank line after paragraph
+                
+                elif elem.name in ('div', 'section', 'article'):
+                    # Process children
+                    for child in elem.children:
+                        if isinstance(child, Tag):
+                            process_element(child, indent)
+                
+                elif elem.name in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
+                    text = _norm_spaces(elem.get_text(' ', strip=True))
+                    if text:
+                        lines.append('')
+                        lines.append(text)
+                        lines.append('')
+                
+                elif elem.name == 'br':
+                    lines.append('')
+                
+                elif elem.name == 'table':
+                    # Handle tables - extract as indented text
+                    for row in elem.find_all('tr'):
+                        cells = [_norm_spaces(td.get_text(' ', strip=True)) for td in row.find_all(['td', 'th'])]
+                        if any(cells):
+                            lines.append(' ' * (indent * INDENT_SPACES) + ' | '.join(cells))
+                
+                else:
+                    # For other elements, just get text
+                    text = _norm_spaces(elem.get_text(' ', strip=True))
+                    if text and len(text) > 5:
+                        lines.append(' ' * (indent * INDENT_SPACES) + text)
+            
+            process_element(root)
+            
+            # Clean up the result
+            result = '\n'.join(lines)
+            # Collapse multiple blank lines into two
+            result = re.sub(r'\n{3,}', '\n\n', result)
+            return result.strip()
 
         # Determine if FAR or DFARS and build the direct clause URL
         if clause_number.startswith("252"):
-            # DFARS clause - format: 252.xxx-xxxx
             clause_type = "DFARS"
-            # DFARS clauses are at acquisition.gov/dfars/252.xxx-xxxx
             clause_url = f"https://www.acquisition.gov/dfars/{clause_number.lower()}"
         else:
-            # FAR clause - format: 52.xxx-xx
             clause_type = "FAR"
-            # FAR clauses are at acquisition.gov/far/52.xxx-xx
             clause_url = f"https://www.acquisition.gov/far/{clause_number.lower()}"
 
         logger.info(f"Fetching clause from: {clause_url}")
 
         async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-            # Add proper headers to mimic browser
             client.headers.update({
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -246,11 +390,9 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                 page_title = soup.find('title')
                 if page_title:
                     title_text = page_title.get_text().strip()
-                    # Remove "FAR" or "DFARS" prefix and clause number
                     title = re.sub(r'^(FAR|DFARS)\s*', '', title_text)
                     title = re.sub(r'^\d+\.\d+-\d+\s*', '', title)
                     title = title.replace('| Acquisition.GOV', '').strip()
-                    # Remove leading dash or hyphen
                     title = re.sub(r'^[-–—]\s*', '', title).strip()
 
                 if not title:
@@ -259,55 +401,31 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                         title = h1.get_text().strip()
                         title = re.sub(r'^\d+\.\d+-\d+\s*', '', title)
 
-                # Extract clause text from the article body
-                # acquisition.gov uses <article class="nested0"> for main content
-                text_parts = []
-                
-                # Look for the main article content
+                # Find the main content article
                 main_article = soup.find('article', class_='nested0')
                 if not main_article:
                     main_article = soup.find('article')
                 
+                full_text = ""
                 if main_article:
-                    # Find the body div within the article
+                    # Use text_with_indents to preserve formatting
                     body_div = main_article.find('div', class_='body')
                     if body_div:
-                        # Get all paragraph content
-                        for elem in body_div.find_all(['p', 'li']):
-                            text = elem.get_text(' ', strip=True)
-                            # Clean up the text
-                            text = re.sub(r'\s+', ' ', text)
-                            if text and len(text) > 10:
-                                text_parts.append(text)
+                        full_text = text_with_indents(body_div)
                     else:
-                        # Fallback: get text from entire article
-                        for elem in main_article.find_all(['p', 'li']):
-                            text = elem.get_text(' ', strip=True)
-                            text = re.sub(r'\s+', ' ', text)
-                            if text and len(text) > 10:
-                                text_parts.append(text)
-
-                # If still no content, try broader search
-                if not text_parts:
+                        full_text = text_with_indents(main_article)
+                
+                # If still no content, fallback to simpler extraction
+                if not full_text or len(full_text) < 100:
+                    text_parts = []
                     for p in soup.find_all('p'):
-                        text = p.get_text(' ', strip=True)
-                        text = re.sub(r'\s+', ' ', text)
+                        text = _norm_spaces(p.get_text(' ', strip=True))
                         if text and len(text) > 20:
                             text_parts.append(text)
-
-                # Join and clean up text
-                full_text = "\n\n".join(text_parts)
-
-                # Remove duplicate lines
-                lines = full_text.split('\n')
-                seen = set()
-                unique_lines = []
-                for line in lines:
-                    line_clean = line.strip()
-                    if line_clean and line_clean not in seen:
-                        seen.add(line_clean)
-                        unique_lines.append(line)
-                full_text = "\n".join(unique_lines)[:50000]  # Limit to 50KB
+                    full_text = '\n\n'.join(text_parts)
+                
+                # Limit size
+                full_text = full_text[:50000]
 
                 logger.info(f"Extracted title: {title[:80] if title else 'N/A'}...")
                 logger.info(f"Extracted text length: {len(full_text)} chars")
@@ -318,6 +436,47 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                     return None
 
                 # Extract keywords from text
+                keywords = []
+                keyword_patterns = [
+                    r'small business', r'cybersecurity', r'NIST', r'compliance',
+                    r'subcontract', r'flowdown', r'disclosure', r'payment',
+                    r'equal opportunity', r'Buy American', r'domestic', r'foreign',
+                    r'technical data', r'intellectual property', r'CUI', r'classified'
+                ]
+                for pattern in keyword_patterns:
+                    if re.search(pattern, full_text, re.IGNORECASE):
+                        keywords.append(pattern.replace(r'\s+', ' '))
+
+                # Determine flowdown requirement
+                flowdown_required = bool(re.search(
+                    r'flow.?down|subcontract|lower.?tier|prime contractor shall',
+                    full_text, re.IGNORECASE
+                ))
+
+                return {
+                    "clause_id": str(uuid.uuid4()),
+                    "number": clause_number,
+                    "title": title or f"Clause {clause_number}",
+                    "type": clause_type,
+                    "text": full_text if full_text and len(full_text) > 100 else f"Content available at: {clause_url}",
+                    "summary": None,
+                    "flowdown_required": flowdown_required,
+                    "contract_types": [],
+                    "threshold_amount": None,
+                    "keywords": keywords[:10],
+                    "last_updated": datetime.now(timezone.utc).isoformat(),
+                    "source": "acquisition.gov",
+                    "source_url": clause_url
+                }
+
+            logger.warning(f"Failed to fetch {clause_number}: HTTP {response.status_code}")
+
+        return None
+    except Exception as e:
+        logger.error(f"Error fetching from acquisition.gov: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
                 keywords = []
                 keyword_patterns = [
                     r'small business', r'cybersecurity', r'NIST', r'compliance',
