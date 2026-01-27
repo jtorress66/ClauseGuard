@@ -185,6 +185,10 @@ async def find_part_urls(client: httpx.AsyncClient, part_type: str = "far") -> L
             # Extract title
             title = text[m.end():].strip().lstrip(' .-–—:').strip()
             
+            # Skip "Reserved" clauses - they are empty placeholders
+            if title.lower().startswith("reserved") or "[reserved]" in title.lower():
+                continue
+            
             # Build full URL
             if href.startswith('/'):
                 full_url = f"{BASE}{href}"
