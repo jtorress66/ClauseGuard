@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { 
   ArrowLeft, Star, FileText, Download, 
-  MessageSquare, Plus, Trash2, ExternalLink, Copy, Check
+  MessageSquare, Plus, Trash2, ExternalLink, Copy, Check, LayoutDashboard
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
