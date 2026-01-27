@@ -477,38 +477,9 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
         import traceback
         traceback.print_exc()
         return None
-                keywords = []
-                keyword_patterns = [
-                    r'small business', r'cybersecurity', r'NIST', r'compliance',
-                    r'subcontract', r'flowdown', r'disclosure', r'payment',
-                    r'equal opportunity', r'Buy American', r'domestic', r'foreign',
-                    r'technical data', r'intellectual property', r'CUI', r'classified'
-                ]
-                for pattern in keyword_patterns:
-                    if re.search(pattern, full_text, re.IGNORECASE):
-                        keywords.append(pattern.replace(r'\s+', ' '))
 
-                # Determine flowdown requirement (common indicators)
-                flowdown_required = bool(re.search(
-                    r'flow.?down|subcontract|lower.?tier|prime contractor shall',
-                    full_text, re.IGNORECASE
-                ))
 
-                return {
-                    "clause_id": str(uuid.uuid4()),
-                    "number": clause_number,
-                    "title": title or f"Clause {clause_number}",
-                    "type": clause_type,
-                    "text": full_text if full_text and len(full_text) > 100 else f"Content available at: {clause_url}",
-                    "summary": None,
-                    "flowdown_required": flowdown_required,
-                    "contract_types": [],
-                    "threshold_amount": None,
-                    "keywords": keywords[:10],
-                    "last_updated": datetime.now(timezone.utc).isoformat(),
-                    "source": "acquisition.gov",
-                    "source_url": clause_url
-                }
+# Keep old fetch method as fallback
 
             # If direct URL fails, log the error
             logger.warning(f"Failed to fetch {clause_number}: HTTP {response.status_code}")
