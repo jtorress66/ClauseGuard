@@ -1058,18 +1058,23 @@ async def get_clause_by_number(clause_number: str):
     return clause
 
 @clauses_router.get("/fetch-live/{clause_number:path}")
-async def fetch_live_clause(clause_number: str, request: Request):
+async def fetch_live_clause(clause_number: str, request: Request, force: bool = False):
     """Fetch a clause directly from acquisition.gov and store it"""
     user = await get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required to fetch live data")
 
-    # Check if we already have this clause
-    existing = await db.clauses.find_one({"number": clause_number}, {"_id": 0})
-    if existing and existing.get("source") == "acquisition.gov":
-        return existing
+    # Check if we already have this clause with valid text (not placeholder)
+    if not force:
+        existing = await db.clauses.find_one({"number": clause_number}, {"_id": 0})
+        if existing:
+            text = existing.get("text", "")
+            # Only use cached data if it has real text (not placeholder)
+            if text and len(text) > 500 and "Full text available" not in text and "See acquisition.gov" not in text:
+                return existing
 
-    # Fetch from acquisition.gov
+    # Fetch fresh from acquisition.gov
+    logger.info(f"Fetching {clause_number} fresh from acquisition.gov...")
     clause_data = await fetch_clause_from_acquisition_gov(clause_number)
 
     if clause_data:
