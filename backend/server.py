@@ -2956,12 +2956,23 @@ async def batch_export(export_request: BatchExportRequest, request: Request):
     for clause_num in export_request.clause_numbers:
         clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
         
-        # If include_full_text is requested and clause is missing text, fetch from acquisition.gov
-        if export_request.include_full_text and (not clause or not clause.get("text") or clause.get("text", "").startswith("Full text available")):
+        # If include_full_text is requested and clause is missing or has only summary text, fetch from acquisition.gov
+        # Short text (<1000 chars) likely indicates it's just a summary
+        text = clause.get("text", "") if clause else ""
+        needs_fetch = (
+            not clause or 
+            not text or 
+            len(text) < 1000 or
+            text.startswith("Full text available") or
+            text.startswith("See acquisition.gov") or
+            text.startswith("This clause")  # Summary pattern
+        )
+        
+        if export_request.include_full_text and needs_fetch:
             try:
-                logger.info(f"Fetching full text for {clause_num} from acquisition.gov...")
+                logger.info(f"Fetching full text for {clause_num} from acquisition.gov (existing text: {len(text)} chars)...")
                 live_clause = await fetch_clause_from_acquisition_gov(clause_num)
-                if live_clause and live_clause.get("text"):
+                if live_clause and live_clause.get("text") and len(live_clause.get("text", "")) > len(text):
                     if clause:
                         clause["text"] = live_clause.get("text", "")
                     else:
@@ -2972,6 +2983,7 @@ async def batch_export(export_request: BatchExportRequest, request: Request):
                         {"$set": {"text": live_clause.get("text", ""), "title": live_clause.get("title", clause.get("title", ""))}},
                         upsert=True
                     )
+                    logger.info(f"Updated {clause_num} with {len(live_clause.get('text', ''))} chars of full text")
             except Exception as e:
                 logger.warning(f"Failed to fetch clause {clause_num}: {e}")
         
