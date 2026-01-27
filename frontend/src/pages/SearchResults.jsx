@@ -218,8 +218,17 @@ export default function SearchResults() {
                 ? "bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 shadow-md shadow-purple-200" 
                 : "border-slate-200 hover:bg-slate-50"}`}
               onClick={() => {
-                // Just toggle AI mode - don't trigger search
-                setUseAI(!useAI);
+                // Enable AI mode and trigger search if there's a query
+                if (!useAI) {
+                  setUseAI(true);
+                  if (query.trim()) {
+                    // Trigger AI search
+                    setSearchParams({ q: query, type: clauseType, ai: "true" });
+                  }
+                } else {
+                  // Disable AI mode
+                  setUseAI(false);
+                }
               }}
               data-testid="ai-toggle"
             >
