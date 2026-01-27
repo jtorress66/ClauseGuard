@@ -2993,22 +2993,32 @@ async def batch_export(export_request: BatchExportRequest, request: Request):
     for clause_id in export_request.clause_ids:
         clause = await db.clauses.find_one({"clause_id": clause_id}, {"_id": 0})
         
-        # If include_full_text is requested and clause is missing text, fetch from acquisition.gov
-        if clause and export_request.include_full_text and (not clause.get("text") or clause.get("text", "").startswith("Full text available")):
-            clause_num = clause.get("number")
-            if clause_num:
-                try:
-                    logger.info(f"Fetching full text for {clause_num} from acquisition.gov...")
-                    live_clause = await fetch_clause_from_acquisition_gov(clause_num)
-                    if live_clause and live_clause.get("text"):
-                        clause["text"] = live_clause.get("text", "")
-                        # Cache the fetched text
-                        await db.clauses.update_one(
-                            {"clause_id": clause_id},
-                            {"$set": {"text": live_clause.get("text", "")}}
-                        )
-                except Exception as e:
-                    logger.warning(f"Failed to fetch clause {clause_num}: {e}")
+        # If include_full_text is requested and clause is missing or has only summary text, fetch from acquisition.gov
+        if clause:
+            text = clause.get("text", "")
+            needs_fetch = (
+                not text or 
+                len(text) < 1000 or
+                text.startswith("Full text available") or
+                text.startswith("See acquisition.gov") or
+                text.startswith("This clause")
+            )
+            
+            if export_request.include_full_text and needs_fetch:
+                clause_num = clause.get("number")
+                if clause_num:
+                    try:
+                        logger.info(f"Fetching full text for {clause_num} from acquisition.gov...")
+                        live_clause = await fetch_clause_from_acquisition_gov(clause_num)
+                        if live_clause and live_clause.get("text") and len(live_clause.get("text", "")) > len(text):
+                            clause["text"] = live_clause.get("text", "")
+                            # Cache the fetched text
+                            await db.clauses.update_one(
+                                {"clause_id": clause_id},
+                                {"$set": {"text": live_clause.get("text", "")}}
+                            )
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch clause {clause_num}: {e}")
         
         if clause and clause not in clause_docs:
             clause_docs.append(clause)
