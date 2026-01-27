@@ -4,7 +4,7 @@ import {
   ArrowLeft, Database, RefreshCw, CheckCircle, 
   AlertCircle, Loader2, Settings, Link2, Upload,
   FileText, AlertTriangle, ArrowUpRight, Download,
-  Check, X, Search
+  Check, X, Search, LayoutDashboard
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
