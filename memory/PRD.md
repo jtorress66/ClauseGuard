@@ -29,38 +29,34 @@ Build a Federal Clause Management app that helps government contractors manage F
 - [x] Present vs Missing clause analysis
 - [x] PDF flowdown report export
 
-### Agiloft Integration (Bidirectional) - UPDATED 2025-01-22
+### Agiloft Integration (Bidirectional)
 - [x] **Push Clauses TO Agiloft**: Update Agiloft KB with our clauses
-  - From our database
-  - Live from acquisition.gov
 - [x] **Analyze Agiloft Contracts**: Fetch contracts and check compliance
-  - View contracts from Agiloft KB
-  - Identify correct/missing/needs-update clauses
-  - Check flowdown requirements
-  - Update contracts with compliance flags
-- [x] **Clause Comparison** (P0 FIX): Compare FAR/DFARS clauses between acquisition.gov and Agiloft KB
-  - **NEW**: Uses AgiloftClient class with correct REST API format
-  - **API Format**: POST /clause/search with body `{"search": "", "field": ["clause_number"], "query": ""}`
-  - Identify clauses missing in Agiloft
-  - Upload missing clauses from acquisition.gov to Agiloft
-  - View matched clauses and clauses only in Agiloft
-- [x] **Upload Missing Clauses** (P1): Updated to use new AgiloftClient for proper clause_number field handling
-
-### Local Database Caching (P1) - NEW 2025-01-22
-- [x] Enhanced sync endpoint to cache acquisition.gov clauses locally
-- [x] Supports both FAR and DFARS clause types
-- [x] Force refresh option to update existing entries
-- [x] Reduces API calls to acquisition.gov during comparisons
+- [x] **Clause Comparison**: Compare FAR/DFARS clauses between acquisition.gov and Agiloft KB
+  - Uses AgiloftClient with correct REST API format
+  - Filters out "Reserved" clauses (empty placeholders)
+- [x] **Upload Missing Clauses**: POST /clause with clause_number, clause_title, clause_text, clause_type
 
 ### Export & Reporting
 - [x] Batch export (PDF, JSON, CSV)
 - [x] Flowdown report PDF
-- [x] Include/exclude full text and flowdown info
+- [x] Single clause PDF export
 
 ### Authentication
 - [x] Custom email/password authentication with JWT
 - [x] User registration with validation
 - [x] Protected routes for all sensitive features
+
+## Bug Fixes Applied - 2025-01-27
+
+### Fixed Issues:
+1. ✅ **Note Saving** - Fixed MongoDB ObjectId serialization in POST /api/user/annotations
+2. ✅ **PDF Export** - Fixed endpoint to accept `{clauses: [...]}` JSON body
+3. ✅ **Save Search** - Fixed MongoDB ObjectId serialization in POST /api/user/saved-searches
+4. ✅ **AI Search Toggle** - No longer auto-triggers search, just toggles mode
+5. ✅ **Dashboard Button** - Added to SearchResults, ClauseDetail, and AgiloftIntegration pages
+6. ✅ **Reserved Clauses** - Filtered out from acquisition.gov scraping (they are empty slots)
+7. ✅ **Upload Missing Clauses** - Uses POST /clause with correct field names
 
 ## API Endpoints
 
@@ -68,34 +64,28 @@ Build a Federal Clause Management app that helps government contractors manage F
 - `GET /api/clauses/search` - Search clauses
 - `GET /api/clauses/ai-search` - AI-powered search (requires auth)
 - `GET /api/clauses/fetch-live/{number}` - Fetch from acquisition.gov
-- `POST /api/clauses/sync-from-acquisition-gov` - Enhanced sync with FAR/DFARS support
+- `POST /api/clauses/sync-from-acquisition-gov` - Sync with FAR/DFARS support
 
-### Contracts
-- `POST /api/contracts/upload` - Upload contract
-- `POST /api/contracts/compare` - Compare contracts
-- `POST /api/contracts/{id}/analyze` - AI analysis
-
-### Flowdown
-- `POST /api/flowdown/analyze` - Flowdown analysis
-
-### Agiloft Integration (UPDATED)
-- `POST /api/agiloft/test-connection` - Test Agiloft connection
-- `POST /api/agiloft/push-clauses` - Push clauses TO Agiloft
-- `POST /api/agiloft/compare-clauses` - **FIXED**: Now uses AgiloftClient with correct API format
-- `POST /api/agiloft/upload-missing-clauses` - **IMPROVED**: Now uses AgiloftClient and includes clause_number field
-- `POST /api/agiloft/contracts` - Get Agiloft contracts
-- `POST /api/agiloft/analyze-contract` - Analyze contract compliance
-- `POST /api/agiloft/update-contract` - Update contract in Agiloft
-
-### Comparison Routes (NEW)
-- `GET /api/comparison/acqgov/clauses` - Fetch clauses from acquisition.gov with caching
-- `POST /api/comparison/agiloft/clauses/search` - Search Agiloft clauses
-- `POST /api/comparison/compare` - Full comparison between sources
-- `POST /api/comparison/upload` - Upload clauses to Agiloft
+### User Features
+- `POST /api/user/annotations` - Save notes (FIXED)
+- `GET /api/user/annotations` - Get annotations
+- `DELETE /api/user/annotations/{id}` - Delete annotation
+- `POST /api/user/saved-searches` - Save search (FIXED)
+- `GET /api/user/saved-searches` - Get saved searches
+- `POST /api/user/favorites` - Add favorite (FIXED)
+- `GET /api/user/favorites` - Get favorites
 
 ### Export
+- `POST /api/export/pdf` - Export clauses to PDF (FIXED - accepts JSON body)
 - `POST /api/export/batch` - Batch export (PDF/JSON/CSV)
 - `POST /api/export/flowdown-report` - Flowdown PDF report
+
+### Agiloft Integration
+- `POST /api/agiloft/test-connection` - Test Agiloft connection
+- `POST /api/agiloft/compare-clauses` - Compare clauses (filters Reserved)
+- `POST /api/agiloft/upload-missing-clauses` - Upload using POST /clause
+- `POST /api/agiloft/contracts` - Get Agiloft contracts
+- `POST /api/agiloft/analyze-contract` - Analyze contract compliance
 
 ## Tech Stack
 - **Frontend**: React + Tailwind CSS + Shadcn/UI
@@ -105,62 +95,38 @@ Build a Federal Clause Management app that helps government contractors manage F
 - **Auth**: Custom JWT-based email/password
 - **External**: acquisition.gov, Agiloft REST API
 
-## Backend Architecture (UPDATED 2025-01-22)
+## Backend Architecture
 ```
 /app/backend/
 ├── server.py              # Main FastAPI app with routers
-├── agiloft_client.py      # NEW: Correct Agiloft REST API client
-├── acqgov_scraper.py      # NEW: Robust acquisition.gov scraper
-├── comparison_routes.py   # NEW: Modular comparison endpoints
+├── agiloft_client.py      # Correct Agiloft REST API client
+├── acqgov_scraper.py      # Robust acquisition.gov scraper (filters Reserved)
+├── comparison_routes.py   # Modular comparison endpoints
 └── requirements.txt
 ```
 
-### Key Modules
-- **agiloft_client.py**: Contains AgiloftClient class with correct API format
-  - Login: POST /login with `{login, password, KB, lang}`
-  - Search: POST /clause/search with `{search: "", field: ["clause_number"], query: ""}`
-  - Create/Upsert: POST /clause or /clause/upsert
-- **acqgov_scraper.py**: Robust scraper for FAR Part 52 and DFARS Part 252
-  - Regex pattern: `(\d{1,4}\.\d{1,4}(?:[-–—](?=\d)\d{1,6})*)`
-  - Handles various dash characters and normalizes clause numbers
-- **comparison_routes.py**: Modular router for comparison operations
+## Agiloft API Configuration
+- **Login**: POST `/login` with `{login, password, KB, lang}`
+- **Search clauses**: POST `/clause/search` with `{search: "", field: ["clause_number"], query: ""}`
+- **Create clause**: POST `/clause` with `{clause_number, clause_title, clause_text, clause_type}`
 
-## Agiloft API Configuration (CRITICAL)
-- **Instance URL format**: `https://yourinstance.agiloft.com` or `https://yourinstance.saas.agiloft.com`
-- **Full REST API URL**: `{base}/ewws/alrest/{KB}/{endpoint}`
-- **Login endpoint**: POST `/login` with JSON body `{login, password, KB, lang}`
-- **Token location**: `response.result.access_token`
-- **Clause table**: `clause` (lowercase, singular)
-- **Clause search**: POST `/clause/search` with body `{"search": "", "field": ["clause_number"], "query": ""}`
-- **THIS IS THE CORRECT FORMAT** - Do not use OData-style $select syntax
-
-## Next Tasks (P1) - PARTIALLY COMPLETED
-- [x] Upload functionality to push missing clauses to Agiloft - Uses new AgiloftClient
-- [x] Local database caching for scraped acquisition.gov clauses - Enhanced sync endpoint
-- [ ] Real-time notifications for tracking changes to clauses
-
-## Future/Backlog Tasks (P2)
-- [ ] Enhanced UI for Agiloft field mapping configuration
-- [ ] Scheduled sync jobs for Agiloft
-- [ ] Email notifications for clause changes
-- [ ] Bulk clause update from acquisition.gov
-- [ ] Enhanced semantic matching for AI search
-- [ ] Fallback to Playwright UI automation if REST API proves unreliable
+## Key MongoDB Fixes
+All endpoints that insert documents now properly remove `_id` before returning:
+- `ann_dict.pop('_id', None)` in annotations
+- `search_dict.pop('_id', None)` in saved-searches  
+- `fav_dict.pop('_id', None)` in favorites
 
 ## Change Log
-- **2025-01-22 (Session 2)**: 
-  - FIXED P0 Agiloft comparison bug - Now uses correct API format via new AgiloftClient
-  - Updated upload-missing-clauses to use AgiloftClient and include clause_number field
-  - Enhanced sync-from-acquisition-gov endpoint with FAR/DFARS support and force refresh
-  - Fixed frontend Cloudflare 520 error handling in connection test
-  - Added pytest test suite for Agiloft integration
-- **2025-01-22 (Session 1)**: Major backend refactor into modular architecture. Fixed AI Search, login UI, DFARS scraper, and URL construction bugs.
-- **2025-01-21**: Changed authentication from Google OAuth to email/password. Updated entire UI to modern SaaS-style design.
-- **2025-01-15**: Fixed Agiloft URL format and contract data mapping.
+- **2025-01-27**: Fixed 7 bugs - note saving, PDF export, save search, AI toggle, dashboard button, reserved clauses filter, upload missing clauses
+- **2025-01-22**: P0 Agiloft comparison fix, upload-missing-clauses improvement, sync endpoint enhancement
+- **2025-01-21**: Changed auth to email/password, updated UI to modern SaaS-style design
 
-## Notes
-- Agiloft integration now uses the correct REST API format via AgiloftClient
-- The key is the POST /clause/search with `field: ["clause_number"]` - without this, Agiloft doesn't return the clause_number field
-- All protected routes require authentication
-- AI features require Emergent LLM key (already configured)
-- AI Search ONLY uses indexed acquisition.gov data - never fabricates clauses
+## Next Tasks (P1)
+- [ ] Real-time notifications for clause tracking changes
+- [ ] Scheduled sync jobs for Agiloft
+
+## Future/Backlog (P2)
+- [ ] Enhanced UI for Agiloft field mapping
+- [ ] Email notifications for clause changes
+- [ ] Bulk clause update from acquisition.gov
+- [ ] Fallback to Playwright UI automation
