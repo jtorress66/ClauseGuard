@@ -296,23 +296,34 @@ class AgiloftClient:
                     "clause_number": clause_data.get("clause_number")
                 }
     
-    async def upsert_clause(self, clause_data: Dict, query_field: str = "clause_number") -> Dict:
+    async def upsert_clause(self, clause_data: Dict, clause_number: str) -> Dict:
         """
-        Create or update a clause (upsert).
+        Create or update a clause using upsert endpoint.
+        
+        Uses: POST /clause/upsert?lang=en&query=clause_number~='<value>'
+        
+        The clause_number is passed in the query parameter, not the body.
+        Body contains the fields to set: clause_text, clause_date, etc.
         """
+        # Ensure we have a valid token (re-login if needed)
         if not self.token:
             if not await self.login():
                 return {"success": False, "error": "Authentication failed"}
         
         url = f"{self.base_url}/clause/upsert"
         
-        # Build query string for matching
-        query_value = clause_data.get(query_field, "")
-        query = f"{query_field}~='{query_value}'"
+        # Build query string in format: clause_number~='52.225-24'
+        query = f"clause_number~='{clause_number}'"
         
-        logger.info(f"Upserting clause: {query_value}")
+        logger.info(f"=== AGILOFT UPSERT ===")
+        logger.info(f"URL: {url}")
+        logger.info(f"Query param: {query}")
+        logger.info(f"Clause number: {clause_number}")
+        logger.info(f"Body keys: {list(clause_data.keys())}")
+        logger.info(f"clause_text length: {len(clause_data.get('clause_text', ''))} chars")
+        logger.info(f"clause_date: {clause_data.get('clause_date')}")
         
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             try:
                 response = await client.post(
                     url,
@@ -321,24 +332,50 @@ class AgiloftClient:
                     headers=self._get_auth_headers()
                 )
                 
+                logger.info(f"Agiloft upsert response status: {response.status_code}")
+                logger.info(f"Agiloft upsert response (first 1000 chars): {response.text[:1000]}")
+                
                 if response.status_code in [200, 201]:
-                    data = response.json()
-                    return {
-                        "success": data.get("success", True),
-                        "data": data,
-                        "clause_number": clause_data.get("clause_number"),
-                        "action": "upserted"
-                    }
+                    try:
+                        data = response.json()
+                        api_success = data.get("success", True)
+                        if api_success:
+                            logger.info(f"SUCCESS: Clause {clause_number} upserted to Agiloft")
+                            return {
+                                "success": True,
+                                "data": data,
+                                "clause_number": clause_number,
+                                "action": "upserted"
+                            }
+                        else:
+                            error_msg = data.get("message", str(data.get("errors", "Unknown error")))
+                            logger.error(f"FAILED: Agiloft returned success=false: {error_msg}")
+                            return {
+                                "success": False,
+                                "error": error_msg,
+                                "clause_number": clause_number
+                            }
+                    except Exception as json_err:
+                        logger.warning(f"Response not JSON but status was OK: {json_err}")
+                        return {
+                            "success": True,
+                            "data": response.text,
+                            "clause_number": clause_number,
+                            "action": "upserted"
+                        }
                 else:
+                    error_text = response.text[:500]
+                    logger.error(f"FAILED: HTTP {response.status_code} - {error_text}")
                     return {
                         "success": False,
-                        "error": response.text[:200],
-                        "clause_number": clause_data.get("clause_number")
+                        "error": f"HTTP {response.status_code}: {error_text}",
+                        "clause_number": clause_number
                     }
                     
             except Exception as e:
+                logger.error(f"Exception in upsert: {e}")
                 return {
                     "success": False,
                     "error": str(e),
-                    "clause_number": clause_data.get("clause_number")
+                    "clause_number": clause_number
                 }
