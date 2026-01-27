@@ -208,6 +208,60 @@ class AgiloftClient:
         
         return clause_numbers
     
+    async def check_clause_exists(self, clause_number: str) -> bool:
+        """
+        Check if a clause with the given clause_number exists in Agiloft.
+        Uses POST /clause/search with query for the specific clause number.
+        """
+        if not self.token:
+            if not await self.login():
+                return False
+        
+        url = f"{self.base_url}/clause/search"
+        
+        # Search for this specific clause number
+        payload = {
+            "search": "",
+            "field": ["clause_number"],
+            "query": f"clause_number~='{clause_number}'"
+        }
+        
+        logger.info(f"Checking if clause {clause_number} exists in Agiloft...")
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.post(
+                    url,
+                    params={"lang": "en"},
+                    json=payload,
+                    headers=self._get_auth_headers()
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    success = data.get("success", False)
+                    
+                    if success:
+                        result = data.get("result", [])
+                        # Check if any records returned
+                        if isinstance(result, list) and len(result) > 0:
+                            logger.info(f"Clause {clause_number} EXISTS in Agiloft ({len(result)} records found)")
+                            return True
+                        elif isinstance(result, dict):
+                            # Single record or nested structure
+                            logger.info(f"Clause {clause_number} EXISTS in Agiloft (dict result)")
+                            return True
+                    
+                    logger.info(f"Clause {clause_number} does NOT exist in Agiloft")
+                    return False
+                else:
+                    logger.warning(f"Check clause exists failed: {response.status_code}")
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"Error checking clause exists: {e}")
+                return False
+    
     async def search_clauses(self, select_fields: Optional[List[str]] = None, 
                              top: int = 5000) -> List[Dict]:
         """
