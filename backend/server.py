@@ -1382,7 +1382,8 @@ async def save_search(request: Request, query: str = None, filters: Dict[str, An
     search_dict = search.model_dump()
     search_dict["created_at"] = search_dict["created_at"].isoformat()
     await db.saved_searches.insert_one(search_dict)
-    return search_dict
+    # Remove MongoDB _id before returning
+    search_dict.pop("_id", None)
     return search_dict
 
 @user_router.delete("/saved-searches/{search_id}")
