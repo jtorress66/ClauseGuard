@@ -1,0 +1,170 @@
+/* App-specific styles */
+
+.App {
+    min-height: 100vh;
+}
+
+/* Hero section specific styles */
+.hero-section {
+    min-height: 100vh;
+    position: relative;
+    overflow: hidden;
+}
+
+.hero-section::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: 
+        radial-gradient(ellipse at 30% 20%, rgba(20, 184, 166, 0.15) 0%, transparent 50%),
+        radial-gradient(ellipse at 70% 80%, rgba(15, 23, 42, 0.3) 0%, transparent 50%);
+    pointer-events: none;
+}
+
+/* Search bar animation */
+.search-container {
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.search-container:focus-within {
+    transform: scale(1.02);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+/* Feature cards */
+.feature-icon {
+    width: 56px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #F0FDFA 0%, #CCFBF1 100%);
+    color: #0F766E;
+    transition: all 0.3s ease;
+}
+
+.feature-card:hover .feature-icon {
+    transform: scale(1.1);
+    background: linear-gradient(135deg, #0F766E 0%, #115E59 100%);
+    color: white;
+}
+
+/* Popular clause tags */
+.popular-tag {
+    transition: all 0.2s ease;
+}
+
+.popular-tag:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: translateY(-2px);
+}
+
+/* Clause card styling */
+.clause-card {
+    transition: all 0.3s ease;
+    border-left: 4px solid transparent;
+}
+
+.clause-card:hover {
+    border-left-color: #0F766E;
+    transform: translateX(4px);
+}
+
+/* Status badges */
+.status-far {
+    background: linear-gradient(135deg, #0F766E, #14B8A6);
+}
+
+.status-dfars {
+    background: linear-gradient(135deg, #0F172A, #1E293B);
+}
+
+/* Loading skeleton */
+.skeleton {
+    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.5s infinite;
+}
+
+@keyframes skeleton-loading {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* Navbar styling */
+.navbar {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+
+/* Dashboard cards */
+.dashboard-card {
+    transition: all 0.3s ease;
+}
+
+.dashboard-card:hover {
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+}
+
+/* Upload zone */
+.upload-zone {
+    border: 2px dashed #CBD5E1;
+    transition: all 0.3s ease;
+}
+
+.upload-zone:hover,
+.upload-zone.active {
+    border-color: #0F766E;
+    background: rgba(15, 118, 110, 0.05);
+}
+
+/* Compliance checklist */
+.checklist-item {
+    transition: all 0.2s ease;
+}
+
+.checklist-item:hover {
+    background: rgba(15, 118, 110, 0.05);
+}
+
+/* Annotation bubble */
+.annotation-bubble {
+    position: relative;
+}
+
+.annotation-bubble::before {
+    content: '';
+    position: absolute;
+    left: -8px;
+    top: 12px;
+    border: 8px solid transparent;
+    border-right-color: #F59E0B;
+}
+
+/* Print styles */
+@media print {
+    .no-print {
+        display: none !important;
+    }
+    
+    .print-only {
+        display: block !important;
+    }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .hero-section {
+        min-height: auto;
+        padding-top: 60px;
+        padding-bottom: 60px;
+    }
+    
+    .search-container:focus-within {
+        transform: none;
+    }
+}

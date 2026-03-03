@@ -1,0 +1,522 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Modern Font Stack */
+body {
+    margin: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+}
+
+code, .mono {
+    font-family: 'JetBrains Mono', source-code-pro, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Modern Color Palette - Soft Teals and Slate */
+@layer base {
+    :root {
+        --background: 220 20% 97%;
+        --foreground: 224 30% 15%;
+        --card: 0 0% 100%;
+        --card-foreground: 224 30% 15%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 224 30% 15%;
+        --primary: 173 58% 39%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 220 14% 96%;
+        --secondary-foreground: 224 30% 15%;
+        --muted: 220 14% 96%;
+        --muted-foreground: 220 9% 46%;
+        --accent: 173 58% 39%;
+        --accent-foreground: 0 0% 100%;
+        --destructive: 0 72% 51%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 220 13% 91%;
+        --input: 220 13% 91%;
+        --ring: 173 58% 39%;
+        --chart-1: 173 58% 39%;
+        --chart-2: 199 89% 48%;
+        --chart-3: 262 83% 58%;
+        --chart-4: 339 90% 51%;
+        --chart-5: 35 92% 50%;
+        --radius: 0.75rem;
+    }
+    .dark {
+        --background: 224 30% 8%;
+        --foreground: 210 40% 98%;
+        --card: 224 30% 12%;
+        --card-foreground: 210 40% 98%;
+        --popover: 224 30% 12%;
+        --popover-foreground: 210 40% 98%;
+        --primary: 173 58% 45%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 224 25% 18%;
+        --secondary-foreground: 210 40% 98%;
+        --muted: 224 25% 18%;
+        --muted-foreground: 215 20% 65%;
+        --accent: 173 58% 45%;
+        --accent-foreground: 0 0% 100%;
+        --destructive: 0 62% 30%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 224 25% 20%;
+        --input: 224 25% 20%;
+        --ring: 173 58% 45%;
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+    body {
+        @apply bg-background text-foreground;
+    }
+}
+
+/* Soft Background Gradient */
+.app-background {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #e2e8f0 100%);
+    min-height: 100vh;
+}
+
+.app-background-soft {
+    background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+    min-height: 100vh;
+}
+
+/* Hero Gradient - Modern Teal to Slate */
+.hero-gradient {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 40%, #115e59 100%);
+}
+
+.hero-gradient-subtle {
+    background: linear-gradient(135deg, #f0fdfa 0%, #f8fafc 50%, #e0f2fe 100%);
+}
+
+/* Modern Card Styles */
+.modern-card {
+    @apply bg-white rounded-xl border border-slate-200/60 shadow-sm;
+    transition: all 0.2s ease-out;
+}
+
+.modern-card:hover {
+    @apply shadow-md border-slate-200;
+    transform: translateY(-1px);
+}
+
+.modern-card-elevated {
+    @apply bg-white rounded-xl border border-slate-200/60;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.03);
+}
+
+.modern-card-elevated:hover {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.03);
+    transform: translateY(-2px);
+}
+
+/* Glass Morphism - Subtle */
+.glass {
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.glass-dark {
+    background: rgba(15, 23, 42, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Modern Button Styles */
+.btn-primary {
+    @apply bg-teal-600 hover:bg-teal-700 text-white font-medium px-4 py-2 rounded-lg;
+    @apply transition-all duration-200 ease-out;
+    @apply shadow-sm hover:shadow-md;
+}
+
+.btn-primary:active {
+    transform: scale(0.98);
+}
+
+.btn-secondary {
+    @apply bg-white hover:bg-slate-50 text-slate-700 font-medium px-4 py-2 rounded-lg;
+    @apply border border-slate-200 hover:border-slate-300;
+    @apply transition-all duration-200 ease-out;
+    @apply shadow-sm hover:shadow-md;
+}
+
+.btn-ghost {
+    @apply bg-transparent hover:bg-slate-100 text-slate-600 font-medium px-4 py-2 rounded-lg;
+    @apply transition-all duration-200 ease-out;
+}
+
+/* Feature Card Hover */
+.feature-card {
+    @apply bg-white rounded-xl border border-slate-200/60 p-6;
+    @apply transition-all duration-300 ease-out;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.feature-card:hover {
+    @apply border-teal-200;
+    box-shadow: 0 10px 25px -5px rgba(20, 184, 166, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+    transform: translateY(-3px);
+}
+
+.feature-card .icon-wrapper {
+    @apply w-12 h-12 rounded-xl flex items-center justify-center;
+    @apply bg-gradient-to-br from-teal-50 to-cyan-50;
+    @apply transition-all duration-300;
+}
+
+.feature-card:hover .icon-wrapper {
+    @apply from-teal-100 to-cyan-100;
+    transform: scale(1.05);
+}
+
+/* Stat Card */
+.stat-card {
+    @apply bg-gradient-to-br from-white to-slate-50 rounded-xl border border-slate-200/60 p-5;
+    @apply transition-all duration-200;
+}
+
+.stat-card:hover {
+    @apply border-slate-300;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+/* Input Styles */
+.input-modern {
+    @apply bg-white border border-slate-200 rounded-lg px-4 py-2.5;
+    @apply focus:ring-2 focus:ring-teal-500/20 focus:border-teal-400;
+    @apply transition-all duration-200;
+    @apply placeholder:text-slate-400;
+}
+
+.input-modern:hover {
+    @apply border-slate-300;
+}
+
+/* Search Input - Special */
+.search-input-hero {
+    @apply bg-white/95 border-0 shadow-xl rounded-xl py-4;
+    @apply focus:ring-4 focus:ring-teal-500/20;
+    @apply transition-all duration-200;
+}
+
+.search-input-hero:hover,
+.search-input-hero:focus {
+    @apply shadow-2xl;
+}
+
+/* Navigation */
+.navbar {
+    @apply backdrop-blur-md;
+    background: rgba(15, 23, 42, 0.9);
+}
+
+.navbar-light {
+    @apply bg-white/80 backdrop-blur-md border-b border-slate-200/60;
+}
+
+/* Custom Scrollbar - Modern */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    @apply bg-slate-100 rounded-full;
+}
+
+::-webkit-scrollbar-thumb {
+    @apply bg-slate-300 rounded-full;
+    transition: background 0.2s;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-400;
+}
+
+/* Animations */
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes pulse-soft {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+.animate-fade-in-up {
+    animation: fadeInUp 0.5s ease-out forwards;
+}
+
+.animate-fade-in {
+    animation: fadeIn 0.3s ease-out forwards;
+}
+
+.animate-slide-in {
+    animation: slideInRight 0.4s ease-out forwards;
+}
+
+.animate-pulse-soft {
+    animation: pulse-soft 2s ease-in-out infinite;
+}
+
+.animation-delay-100 { animation-delay: 100ms; }
+.animation-delay-200 { animation-delay: 200ms; }
+.animation-delay-300 { animation-delay: 300ms; }
+.animation-delay-400 { animation-delay: 400ms; }
+.animation-delay-500 { animation-delay: 500ms; }
+
+/* Badge Styles */
+.badge-teal {
+    @apply bg-teal-50 text-teal-700 border border-teal-200 px-2.5 py-1 rounded-full text-xs font-medium;
+}
+
+.badge-blue {
+    @apply bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-1 rounded-full text-xs font-medium;
+}
+
+.badge-amber {
+    @apply bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-1 rounded-full text-xs font-medium;
+}
+
+.badge-red {
+    @apply bg-red-50 text-red-700 border border-red-200 px-2.5 py-1 rounded-full text-xs font-medium;
+}
+
+.badge-green {
+    @apply bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-full text-xs font-medium;
+}
+
+/* Table Styles */
+.table-modern {
+    @apply w-full text-sm;
+}
+
+.table-modern thead {
+    @apply bg-slate-50 border-b border-slate-200;
+}
+
+.table-modern th {
+    @apply px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider;
+}
+
+.table-modern tbody tr {
+    @apply border-b border-slate-100 hover:bg-slate-50/50 transition-colors;
+}
+
+.table-modern td {
+    @apply px-4 py-3;
+}
+
+/* Sidebar */
+.sidebar {
+    @apply bg-white border-r border-slate-200/60;
+    box-shadow: 1px 0 3px rgba(0, 0, 0, 0.02);
+}
+
+/* Clause Number Styling */
+.clause-number {
+    @apply font-mono text-teal-600 font-semibold text-sm;
+}
+
+/* Status indicators */
+.status-dot {
+    @apply w-2 h-2 rounded-full;
+}
+
+.status-dot-active { @apply bg-emerald-500; }
+.status-dot-warning { @apply bg-amber-500; }
+.status-dot-error { @apply bg-red-500; }
+.status-dot-inactive { @apply bg-slate-400; }
+
+/* Page Header */
+.page-header {
+    @apply bg-white border-b border-slate-200/60 px-8 py-6;
+}
+
+/* Section dividers */
+.section-divider {
+    @apply border-t border-slate-200/60 my-8;
+}
+
+/* Empty state */
+.empty-state {
+    @apply text-center py-12;
+}
+
+.empty-state-icon {
+    @apply w-16 h-16 mx-auto mb-4 text-slate-300;
+}
+
+.empty-state-text {
+    @apply text-slate-500 text-sm;
+}
+
+/* Loading skeleton */
+.skeleton {
+    @apply bg-slate-200 rounded animate-pulse;
+}
+
+/* Tooltip */
+.tooltip {
+    @apply bg-slate-900 text-white text-xs px-2 py-1 rounded shadow-lg;
+}
+
+/* Auth Card */
+.auth-card {
+    @apply bg-white rounded-2xl shadow-xl border border-slate-200/60 p-8;
+    max-width: 420px;
+    width: 100%;
+}
+
+/* Form Label */
+.form-label {
+    @apply text-sm font-medium text-slate-700 mb-1.5 block;
+}
+
+/* Form Error */
+.form-error {
+    @apply text-sm text-red-600 mt-1;
+}
+
+/* Link Styles */
+.link-primary {
+    @apply text-teal-600 hover:text-teal-700 font-medium;
+    @apply transition-colors duration-200;
+}
+
+/* Divider with text */
+.divider-text {
+    @apply flex items-center text-slate-400 text-sm my-6;
+}
+
+.divider-text::before,
+.divider-text::after {
+    content: '';
+    @apply flex-1 border-t border-slate-200;
+}
+
+.divider-text span {
+    @apply px-4;
+}
+
+/* Clause Text DITA Styling - Override Tailwind prose styles */
+.clause-text p {
+    display: block !important;
+    margin-bottom: 0.75em !important;
+    line-height: 1.7;
+}
+
+/* Ensure inline padding-left styles work for indentation */
+.clause-text p[style*="padding-left"] {
+    display: block !important;
+}
+
+/* ListL classes from acquisition.gov for indentation */
+.clause-text .ListL1,
+.clause-text p.ListL1 {
+    display: block !important;
+    margin-left: 0 !important;
+    padding-left: 2.5em !important;
+    text-indent: -1.5em !important;
+    margin-bottom: 0.75em !important;
+}
+
+.clause-text .ListL2,
+.clause-text p.ListL2 {
+    display: block !important;
+    margin-left: 0 !important;
+    padding-left: 4em !important;
+    text-indent: -1.5em !important;
+    margin-bottom: 0.75em !important;
+}
+
+.clause-text .ListL3,
+.clause-text p.ListL3 {
+    display: block !important;
+    margin-left: 0 !important;
+    padding-left: 5.5em !important;
+    text-indent: -1.5em !important;
+    margin-bottom: 0.75em !important;
+}
+
+.clause-text .ListL4,
+.clause-text p.ListL4 {
+    display: block !important;
+    margin-left: 0 !important;
+    padding-left: 7em !important;
+    text-indent: -1.5em !important;
+    margin-bottom: 0.75em !important;
+}
+
+/* Centered title style - like "Unique Entity Identifier (Oct 2016)" */
+.clause-text .Ctr_SmCaps,
+.clause-text p.Ctr_SmCaps {
+    display: block !important;
+    text-align: center !important;
+    font-variant: small-caps;
+    margin-bottom: 1em !important;
+}
+
+/* End of clause/provision markers */
+.clause-text .Endofclause,
+.clause-text p.Endofclause {
+    display: block !important;
+    text-align: center !important;
+    font-style: italic;
+    margin-top: 1em !important;
+}
+
+.clause-text div[style*="margin-left"] {
+    margin-bottom: 0.5em;
+}
+
+.clause-text .list-item {
+    margin-bottom: 0.5em;
+}
+
+/* DITA autonumber styling */
+.clause-text ph[props="autonumber"],
+.clause-text .ph.autonumber {
+    font-weight: normal;
+    margin-right: 0.5em;
+}

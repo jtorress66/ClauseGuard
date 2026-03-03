@@ -1,0 +1,155 @@
+{
+  "summary": {
+    "total_tests": 24,
+    "passed_tests": 23,
+    "failed_tests": 1,
+    "success_rate": "95.8%"
+  },
+  "test_results": [
+    {
+      "test_name": "Root API",
+      "success": true,
+      "details": "Status: 200, Response keys: ['message', 'version']",
+      "timestamp": "2026-01-14T15:27:33.724893"
+    },
+    {
+      "test_name": "Basic Clause Search",
+      "success": true,
+      "details": "Status: 200, Response keys: ['clauses', 'total']",
+      "timestamp": "2026-01-14T15:27:33.759426"
+    },
+    {
+      "test_name": "Clause Search with Type",
+      "success": true,
+      "details": "Status: 200, Response keys: ['clauses', 'total']",
+      "timestamp": "2026-01-14T15:27:33.796788"
+    },
+    {
+      "test_name": "Search for Clause ID",
+      "success": true,
+      "details": "Status: 200, Response keys: ['clauses', 'total']",
+      "timestamp": "2026-01-14T15:27:33.834123"
+    },
+    {
+      "test_name": "Get Clause by ID",
+      "success": true,
+      "details": "Status: 200, Response keys: ['clause_id', 'number', 'title', 'type', 'text', 'summary', 'flowdown_required', 'contract_types', 'threshold_amount', 'keywords', 'last_updated']",
+      "timestamp": "2026-01-14T15:27:33.912221"
+    },
+    {
+      "test_name": "Get Clause by Number",
+      "success": true,
+      "details": "Status: 200, Response keys: ['clause_id', 'number', 'title', 'type', 'text', 'summary', 'flowdown_required', 'contract_types', 'threshold_amount', 'keywords', 'last_updated']",
+      "timestamp": "2026-01-14T15:27:33.948232"
+    },
+    {
+      "test_name": "Auth Me (Unauthenticated)",
+      "success": true,
+      "details": "Status: 401, Response keys: ['detail']",
+      "timestamp": "2026-01-14T15:27:33.984320"
+    },
+    {
+      "test_name": "Test Session Validation",
+      "success": true,
+      "details": "Status: 200, Response keys: ['user_id', 'email', 'name', 'picture', 'created_at']",
+      "timestamp": "2026-01-14T15:27:34.018590"
+    },
+    {
+      "test_name": "AI Search (Authenticated)",
+      "success": true,
+      "details": "Status: 200, Response keys: ['clauses', 'ai_analysis', 'total']",
+      "timestamp": "2026-01-14T15:27:37.095693"
+    },
+    {
+      "test_name": "Get Contracts (Authenticated)",
+      "success": true,
+      "details": "Status: 200, Response keys: ['contracts']",
+      "timestamp": "2026-01-14T15:27:37.132421"
+    },
+    {
+      "test_name": "Flowdown Analysis (Authenticated)",
+      "success": true,
+      "details": "Status: 200, Response keys: ['required_flowdown_clauses', 'present_in_contract', 'missing_from_contract', 'clause_details']",
+      "timestamp": "2026-01-14T15:27:37.168895"
+    },
+    {
+      "test_name": "Batch Export PDF (Authenticated)",
+      "success": true,
+      "details": "Status: 200, Content-Type: application/pdf",
+      "timestamp": "2026-01-14T15:27:37.213803"
+    },
+    {
+      "test_name": "Batch Export JSON (Authenticated)",
+      "success": true,
+      "details": "Status: 200, Response keys: ['export_date', 'total_clauses', 'clauses']",
+      "timestamp": "2026-01-14T15:27:37.251524"
+    },
+    {
+      "test_name": "Batch Export CSV (Authenticated)",
+      "success": true,
+      "details": "Status: 200, Content-Type: text/csv; charset=utf-8",
+      "timestamp": "2026-01-14T15:27:37.288090"
+    },
+    {
+      "test_name": "Flowdown Report Export (Authenticated)",
+      "success": false,
+      "details": "Status: 422, Error: [{'type': 'missing', 'loc': ['body'], 'msg': 'Field required', 'input': None, 'url': 'https://errors.pydantic.dev/2.12/v/missing'}]",
+      "timestamp": "2026-01-14T15:27:37.318523"
+    },
+    {
+      "test_name": "Agiloft Test Connection (Authenticated)",
+      "success": true,
+      "details": "Status: 200, Response keys: ['success', 'message']",
+      "timestamp": "2026-01-14T15:27:37.435460"
+    },
+    {
+      "test_name": "Agiloft Push Clauses (Authenticated)",
+      "success": true,
+      "details": "Status: 200, Response keys: ['success', 'message']",
+      "timestamp": "2026-01-14T15:27:37.494005"
+    },
+    {
+      "test_name": "Agiloft Get Contracts (Authenticated)",
+      "success": true,
+      "details": "Status: 200, Response keys: ['success', 'message']",
+      "timestamp": "2026-01-14T15:27:37.548359"
+    },
+    {
+      "test_name": "Agiloft Analyze Contract (Authenticated)",
+      "success": true,
+      "details": "Status: 200, Response keys: ['success', 'contract_id', 'compliance_status', 'correct_clauses', 'missing_clauses', 'needs_update', 'required_flowdown', 'total_checked', 'recommendations']",
+      "timestamp": "2026-01-14T15:27:37.596476"
+    },
+    {
+      "test_name": "Agiloft Update Contract (Authenticated)",
+      "success": true,
+      "details": "Status: 200, Response keys: ['success', 'message']",
+      "timestamp": "2026-01-14T15:27:37.659901"
+    },
+    {
+      "test_name": "Sync from acquisition.gov (Authenticated)",
+      "success": true,
+      "details": "Status: 200, Response keys: ['message', 'total_new']",
+      "timestamp": "2026-01-14T15:27:39.560595"
+    },
+    {
+      "test_name": "Get Favorites (Authenticated)",
+      "success": true,
+      "details": "Status: 200, Response keys: ['favorites']",
+      "timestamp": "2026-01-14T15:27:39.612924"
+    },
+    {
+      "test_name": "Get Saved Searches (Authenticated)",
+      "success": true,
+      "details": "Status: 200, Response keys: ['saved_searches']",
+      "timestamp": "2026-01-14T15:27:39.645951"
+    },
+    {
+      "test_name": "Get Annotations (Authenticated)",
+      "success": true,
+      "details": "Status: 200, Response keys: ['annotations']",
+      "timestamp": "2026-01-14T15:27:39.679676"
+    }
+  ],
+  "timestamp": "2026-01-14T15:27:39.680319"
+}
