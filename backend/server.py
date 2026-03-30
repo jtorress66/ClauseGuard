@@ -2515,6 +2515,10 @@ async def extract_clauses_for_agiloft(contract_id: str, request: Request):
 async def export_clauses_json(contract_id: str, request: Request):
     """
     Export extracted clauses as downloadable JSON file for Agiloft KB upload.
+    
+    Includes:
+    - All top-level clauses in the contract
+    - All selected sub-clauses (marked with X or XX)
     """
     from fastapi.responses import JSONResponse
     
@@ -2537,34 +2541,41 @@ async def export_clauses_json(contract_id: str, request: Request):
     agiloft_data = {
         "contract_reference": contract.get("filename", ""),
         "extraction_date": datetime.now(timezone.utc).isoformat(),
-        "selected_clauses": [],
-        "all_incorporated_clauses": []
+        "top_level_clauses": [],
+        "selected_sub_clauses": [],
+        "all_clauses_for_upload": []
     }
     
-    # Add selected sub-clauses
-    for clause in extraction_result["all_selected_clauses"]:
+    # Add top-level clauses
+    for clause in extraction_result["top_level_clauses"]:
         db_clause = await db.clauses.find_one({"number": clause["number"]}, {"_id": 0})
-        agiloft_data["selected_clauses"].append({
+        clause_entry = {
             "number": clause["number"],
             "title": db_clause.get("title", clause.get("title", "")) if db_clause else clause.get("title", ""),
             "type": "FAR" if clause["number"].startswith("52.") else "DFARS",
-            "is_selected": True,
+            "category": "top_level",
             "acquisition_gov_url": f"https://www.acquisition.gov/#{'FAR' if clause['number'].startswith('52.') else 'DFARS'}_{clause['number']}"
-        })
+        }
+        agiloft_data["top_level_clauses"].append(clause_entry)
+        agiloft_data["all_clauses_for_upload"].append(clause_entry)
     
-    # Add all incorporated clauses (by reference + full text)
-    all_incorporated = extraction_result["incorporated_by_reference"] + extraction_result["incorporated_by_full_text"]
-    for clause in all_incorporated:
+    # Add selected sub-clauses
+    for clause in extraction_result["selected_sub_clauses"]:
         db_clause = await db.clauses.find_one({"number": clause["number"]}, {"_id": 0})
-        agiloft_data["all_incorporated_clauses"].append({
+        clause_entry = {
             "number": clause["number"],
             "title": db_clause.get("title", clause.get("title", "")) if db_clause else clause.get("title", ""),
-            "type": "FAR" if clause["number"].startswith("52.") else "DFARS"
-        })
+            "type": "FAR" if clause["number"].startswith("52.") else "DFARS",
+            "category": "selected_sub_clause",
+            "acquisition_gov_url": f"https://www.acquisition.gov/#{'FAR' if clause['number'].startswith('52.') else 'DFARS'}_{clause['number']}"
+        }
+        agiloft_data["selected_sub_clauses"].append(clause_entry)
+        agiloft_data["all_clauses_for_upload"].append(clause_entry)
     
     agiloft_data["summary"] = {
-        "total_selected_clauses": len(agiloft_data["selected_clauses"]),
-        "total_incorporated_clauses": len(agiloft_data["all_incorporated_clauses"])
+        "total_top_level_clauses": len(agiloft_data["top_level_clauses"]),
+        "total_selected_sub_clauses": len(agiloft_data["selected_sub_clauses"]),
+        "total_clauses_for_upload": len(agiloft_data["all_clauses_for_upload"])
     }
     
     return JSONResponse(
