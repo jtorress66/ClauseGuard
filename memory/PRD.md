@@ -132,10 +132,11 @@ Build a Federal Clause Management app that helps government contractors manage F
 - Level 4: `padding-left: 6.1em` - (A), (B), (C)...
 
 ## Change Log
-- **2025-02-05 (Session 5)**: 
+- **2025-03-30 (Session 5 continued)**: 
   - Fixed P0 bug - "Generate Checklist" feature failing with ObjectId serialization error. Root cause: MongoDB `insert_one()` mutates dict adding `_id` (ObjectId). Fix: Added `checklist_dict.pop("_id", None)` before return.
   - Fixed P0 bug - Contract Comparison "Key Differences" rendering error. Root cause: AI returns `key_differences` as objects with keys `{topic, contract_1, contract_2, practical_effect}` instead of strings. Fix: Updated `ContractComparison.jsx` to handle both string and object formats.
   - Fixed P0 bug - DFARS AI Search returning 0 results. Root cause: AI search only loaded first 500 clauses from DB (total: 986), excluding most DFARS clauses. Fix: Added intelligent clause type filtering based on query prefix (252. vs 52.) and increased limit to 1000.
+  - Fixed P0 bug - Contract clause detection only finding 1 clause instead of 80+. Root cause: Detection algorithm was incorrectly rejecting clauses in numbered list format like "XX (1) 52.203-6" thinking they were references within another clause. Fix: Updated `_detect_clause_headers()` to properly accept numbered list clauses as actual headers when not inside a checkbox section, and added pattern to detect clauses with comma-separated titles.
 - **2025-02-02 (Session 4)**: Fixed P0 regressions - Clause Detail formatting, PDF indentation, "(End of clause)" centering. Added Search page Clear button.
 - **2025-01-27 (Session 3)**: Added "Sync All Clauses" button, fixed PDF export to include full text, enhanced Agiloft logging
 - **2025-01-27 (Session 2)**: Fixed AI Search, PDF export format, upload missing clauses, dashboard button type
