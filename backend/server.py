@@ -2300,6 +2300,261 @@ async def rescan_contract_clauses(contract_id: str, request: Request):
     
     return result
 
+
+def _extract_clauses_with_checkboxes(text_content: str) -> Dict[str, Any]:
+    """
+    Extract clauses from contract document with checkbox detection.
+    
+    Identifies:
+    1. Top-level incorporated clauses (by reference or full text)
+    2. Sub-clauses within parent clauses (like those in 52.212-5) 
+    3. Which sub-clauses are SELECTED (marked with XX, X, or ✓)
+    
+    Returns structured data for Agiloft KB upload.
+    """
+    import re
+    
+    CLAUSE_NUM_PATTERN = r'((?:52|252)\.\d{3}(?:-\d{1,4})?)'
+    
+    result = {
+        "incorporated_by_reference": [],
+        "incorporated_by_full_text": [],
+        "parent_clauses_with_selections": {},
+        "all_selected_clauses": [],
+        "summary": {}
+    }
+    
+    lines = text_content.split('\n')
+    
+    # Track current section
+    current_section = None
+    current_parent_clause = None
+    
+    for i, line in enumerate(lines):
+        line_stripped = line.strip()
+        line_lower = line_stripped.lower()
+        
+        # Detect section headers
+        if 'incorporated by reference' in line_lower:
+            current_section = 'reference'
+            current_parent_clause = None
+        elif 'incorporated by full text' in line_lower or 'full text' in line_lower:
+            current_section = 'full_text'
+            current_parent_clause = None
+        
+        # Find clause numbers on this line
+        clause_matches = re.findall(CLAUSE_NUM_PATTERN, line_stripped)
+        
+        if not clause_matches:
+            continue
+        
+        for clause_num in clause_matches:
+            clause_num = clause_num.replace('–', '-').replace('—', '-')
+            
+            # Extract title if present (text after clause number before parenthesis or date)
+            title_match = re.search(
+                rf'{re.escape(clause_num)}[,\s]+([A-Z][^(]+?)(?:\s*\(|\s*$)',
+                line_stripped
+            )
+            title = title_match.group(1).strip() if title_match else ""
+            
+            # Check if this is a SELECTED clause (marked with XX, X, ✓)
+            # Pattern: "XX (1) 52.xxx-xx" or "X (1) 52.xxx-xx" or checkmark patterns
+            is_selected = bool(re.search(
+                rf'(?:^|\s)(?:XX|X|✓|✔)\s*(?:\(\d+\))?\s*{re.escape(clause_num)}',
+                line_stripped,
+                re.IGNORECASE
+            ))
+            
+            # Check if this is an UNSELECTED checkbox clause (marked with ___ or [ ])
+            is_checkbox_unselected = bool(re.search(
+                rf'(?:^|\s)(?:___?|____|\[\s*\])\s*(?:\(\d+\))?\s*{re.escape(clause_num)}',
+                line_stripped
+            ))
+            
+            # Check if this looks like a parent clause header (clause at start with title)
+            is_parent_header = bool(re.match(
+                rf'^\s*{re.escape(clause_num)}\s+[A-Z]',
+                line_stripped
+            ))
+            
+            # Determine if this is a sub-clause (has numbered prefix like "(1)", "(a)", etc.)
+            is_sub_clause = bool(re.search(
+                rf'\(\s*(?:\d+|[a-z]|[ivxlcdm]+)\s*\)\s*{re.escape(clause_num)}',
+                line_stripped,
+                re.IGNORECASE
+            ))
+            
+            clause_data = {
+                "number": clause_num,
+                "title": title,
+                "is_selected": is_selected,
+                "source_line": line_stripped[:200]
+            }
+            
+            # If this is a parent clause header, track it
+            if is_parent_header and not is_sub_clause:
+                current_parent_clause = clause_num
+                if clause_num not in result["parent_clauses_with_selections"]:
+                    result["parent_clauses_with_selections"][clause_num] = {
+                        "title": title,
+                        "selected_sub_clauses": [],
+                        "unselected_sub_clauses": []
+                    }
+            
+            # Process based on whether it's a sub-clause or standalone
+            if is_sub_clause or is_checkbox_unselected or is_selected:
+                # This is a sub-clause within a parent clause
+                parent = current_parent_clause or "unknown_parent"
+                
+                if parent not in result["parent_clauses_with_selections"]:
+                    result["parent_clauses_with_selections"][parent] = {
+                        "title": "",
+                        "selected_sub_clauses": [],
+                        "unselected_sub_clauses": []
+                    }
+                
+                if is_selected:
+                    result["parent_clauses_with_selections"][parent]["selected_sub_clauses"].append(clause_data)
+                    result["all_selected_clauses"].append(clause_data)
+                elif is_checkbox_unselected:
+                    result["parent_clauses_with_selections"][parent]["unselected_sub_clauses"].append(clause_data)
+            
+            elif current_section == 'reference':
+                result["incorporated_by_reference"].append(clause_data)
+            elif current_section == 'full_text':
+                result["incorporated_by_full_text"].append(clause_data)
+    
+    # Generate summary
+    result["summary"] = {
+        "total_by_reference": len(result["incorporated_by_reference"]),
+        "total_by_full_text": len(result["incorporated_by_full_text"]),
+        "total_selected_sub_clauses": len(result["all_selected_clauses"]),
+        "parent_clauses_count": len(result["parent_clauses_with_selections"])
+    }
+    
+    return result
+
+
+@contracts_router.post("/{contract_id}/extract-for-agiloft")
+async def extract_clauses_for_agiloft(contract_id: str, request: Request):
+    """
+    Extract clauses from contract with checkbox detection for Agiloft KB upload.
+    
+    Returns JSON with:
+    - Incorporated clauses (by reference and full text)
+    - Parent clauses with their selected/unselected sub-clauses
+    - All selected clauses for easy processing
+    """
+    user = await require_auth(request)
+    
+    contract = await db.contracts.find_one(
+        {"contract_id": contract_id, "user_id": user.user_id}
+    )
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    
+    text_content = contract.get("content", "")
+    if not text_content:
+        raise HTTPException(status_code=400, detail="Contract has no content to analyze")
+    
+    # Extract clauses with checkbox detection
+    extraction_result = _extract_clauses_with_checkboxes(text_content)
+    
+    # Enrich with clause details from our database
+    for clause_list in [extraction_result["incorporated_by_reference"], 
+                        extraction_result["incorporated_by_full_text"],
+                        extraction_result["all_selected_clauses"]]:
+        for clause_data in clause_list:
+            db_clause = await db.clauses.find_one({"number": clause_data["number"]}, {"_id": 0})
+            if db_clause:
+                clause_data["db_title"] = db_clause.get("title", "")
+                clause_data["type"] = db_clause.get("type", "")
+                clause_data["url"] = db_clause.get("url", "")
+    
+    return {
+        "contract_id": contract_id,
+        "filename": contract.get("filename", ""),
+        "extraction": extraction_result,
+        "agiloft_upload_ready": {
+            "clauses": [
+                {
+                    "clause_number": c["number"],
+                    "clause_title": c.get("db_title") or c.get("title", ""),
+                    "clause_type": c.get("type", "FAR" if c["number"].startswith("52.") else "DFARS"),
+                    "source": "contract_extraction",
+                    "is_selected": c.get("is_selected", True)
+                }
+                for c in extraction_result["all_selected_clauses"]
+            ]
+        }
+    }
+
+
+@contracts_router.get("/{contract_id}/export-clauses-json")
+async def export_clauses_json(contract_id: str, request: Request):
+    """
+    Export extracted clauses as downloadable JSON file for Agiloft KB upload.
+    """
+    from fastapi.responses import JSONResponse
+    
+    user = await require_auth(request)
+    
+    contract = await db.contracts.find_one(
+        {"contract_id": contract_id, "user_id": user.user_id}
+    )
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    
+    text_content = contract.get("content", "")
+    if not text_content:
+        raise HTTPException(status_code=400, detail="Contract has no content to analyze")
+    
+    # Extract clauses
+    extraction_result = _extract_clauses_with_checkboxes(text_content)
+    
+    # Build Agiloft-ready JSON
+    agiloft_data = {
+        "contract_reference": contract.get("filename", ""),
+        "extraction_date": datetime.now(timezone.utc).isoformat(),
+        "selected_clauses": [],
+        "all_incorporated_clauses": []
+    }
+    
+    # Add selected sub-clauses
+    for clause in extraction_result["all_selected_clauses"]:
+        db_clause = await db.clauses.find_one({"number": clause["number"]}, {"_id": 0})
+        agiloft_data["selected_clauses"].append({
+            "number": clause["number"],
+            "title": db_clause.get("title", clause.get("title", "")) if db_clause else clause.get("title", ""),
+            "type": "FAR" if clause["number"].startswith("52.") else "DFARS",
+            "is_selected": True,
+            "acquisition_gov_url": f"https://www.acquisition.gov/#{'FAR' if clause['number'].startswith('52.') else 'DFARS'}_{clause['number']}"
+        })
+    
+    # Add all incorporated clauses (by reference + full text)
+    all_incorporated = extraction_result["incorporated_by_reference"] + extraction_result["incorporated_by_full_text"]
+    for clause in all_incorporated:
+        db_clause = await db.clauses.find_one({"number": clause["number"]}, {"_id": 0})
+        agiloft_data["all_incorporated_clauses"].append({
+            "number": clause["number"],
+            "title": db_clause.get("title", clause.get("title", "")) if db_clause else clause.get("title", ""),
+            "type": "FAR" if clause["number"].startswith("52.") else "DFARS"
+        })
+    
+    agiloft_data["summary"] = {
+        "total_selected_clauses": len(agiloft_data["selected_clauses"]),
+        "total_incorporated_clauses": len(agiloft_data["all_incorporated_clauses"])
+    }
+    
+    return JSONResponse(
+        content=agiloft_data,
+        headers={
+            "Content-Disposition": f'attachment; filename="clauses_{contract_id}.json"'
+        }
+    )
+
+
 @contracts_router.post("/{contract_id}/analyze")
 async def analyze_contract(contract_id: str, request: Request):
     """AI-powered contract analysis against FAR/DFARS requirements"""
