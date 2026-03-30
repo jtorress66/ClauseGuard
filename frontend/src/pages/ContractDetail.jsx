@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { 
   ArrowLeft, FileText, Download, Sparkles, 
-  CheckCircle, AlertTriangle, Loader2, ListChecks, BarChart, RefreshCw, Trash2
+  CheckCircle, AlertTriangle, Loader2, ListChecks, BarChart, RefreshCw, Trash2, FileJson
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,8 @@ export default function ContractDetail({ user }) {
   const [rescanning, setRescanning] = useState(false);
   const [checklist, setChecklist] = useState(null);
   const [generatingChecklist, setGeneratingChecklist] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [agiloftExtraction, setAgiloftExtraction] = useState(null);
 
   useEffect(() => {
     fetchContract();
