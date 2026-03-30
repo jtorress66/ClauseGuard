@@ -2306,9 +2306,10 @@ def _extract_clauses_with_checkboxes(text_content: str) -> Dict[str, Any]:
     Extract ALL clauses from contract document with checkbox detection.
     
     Identifies:
-    1. ALL top-level clauses in the document (standalone clauses like 52.212-5)
-    2. Sub-clauses within parent clauses that are SELECTED (marked with X or XX)
-    3. Sub-clauses that are UNSELECTED (marked with ___)
+    1. ALL clauses in checkbox format (XX or ___ prefix)
+    2. Clauses marked as SELECTED (X or XX)
+    3. Clauses marked as UNSELECTED (___)
+    4. Reference-only mentions (in prose text)
     
     Returns structured data for Agiloft KB upload.
     """
@@ -2317,16 +2318,18 @@ def _extract_clauses_with_checkboxes(text_content: str) -> Dict[str, Any]:
     CLAUSE_NUM_PATTERN = r'((?:52|252)\.\d{3}(?:-\d{1,4})?)'
     
     result = {
-        "all_clauses": [],  # ALL clauses found in document
-        "top_level_clauses": [],  # Standalone clauses (not sub-clauses)
-        "selected_sub_clauses": [],  # Sub-clauses marked with X or XX
-        "unselected_sub_clauses": [],  # Sub-clauses marked with ___
+        "all_clauses": [],  # ALL unique clauses found
+        "top_level_clauses": [],  # Clauses that are explicitly selected/incorporated
+        "selected_sub_clauses": [],  # Clauses marked with X or XX
+        "unselected_sub_clauses": [],  # Clauses marked with ___
+        "reference_mentions": [],  # Clauses mentioned in prose (not checkbox)
         "parent_clauses_with_selections": {},
         "summary": {}
     }
     
     lines = text_content.split('\n')
     seen_clauses = set()  # Track unique clauses
+    seen_selected = set()  # Track what we've already added to selected
     current_parent_clause = None
     
     for i, line in enumerate(lines):
@@ -2352,10 +2355,10 @@ def _extract_clauses_with_checkboxes(text_content: str) -> Dict[str, Any]:
             title = re.sub(r'\s*\([A-Z][a-z]{2}\s+\d{4}\)\s*$', '', title).strip()
             
             # Check if this is a SELECTED clause (marked with X or XX at the start)
-            # Pattern: "XX (1) 52.xxx-xx" or "X (1) 52.xxx-xx" 
-            # Must be X or XX followed by space or number, not part of another word
+            # Pattern: "XX (1) 52.xxx-xx" or "X (1) 52.xxx-xx"
+            # Use word boundary to avoid matching text like "TAX" or "BOX"
             is_selected = bool(re.search(
-                rf'(?:^|\s)(?:XX?)\s+(?:\(\d+\)\s*)?{re.escape(clause_num)}',
+                rf'(?:^|\s)X{1,2}\s+(?:\(\d+\)\s*(?:\([ivx]+\)\s*)?)?{re.escape(clause_num)}',
                 line_stripped
             ))
             
@@ -2368,39 +2371,42 @@ def _extract_clauses_with_checkboxes(text_content: str) -> Dict[str, Any]:
             
             # Check if this is an UNSELECTED checkbox clause (marked with ___ or [ ])
             is_checkbox_unselected = bool(re.search(
-                rf'(?:^|\s)(?:___?|____|\[\s*\])\s*(?:\(\d+\)\s*)?{re.escape(clause_num)}',
+                rf'(?:^|\s)(?:___?|____)\s*(?:\(\d+\)\s*(?:\([ivx]+\)\s*)?)?{re.escape(clause_num)}',
                 line_stripped
             ))
             
-            # Check if this is a sub-clause (has numbered prefix like "(1)", "(a)", etc.)
-            is_sub_clause = bool(re.search(
-                rf'(?:XX?|___?|____)\s*\(\s*(?:\d+|[a-z]|[ivxlcdm]+)\s*\)\s*{re.escape(clause_num)}',
+            # Check if this is a checkbox clause at all (either selected or unselected)
+            is_checkbox_clause = is_selected or is_checkbox_unselected
+            
+            # Check if this is just a reference in prose (no checkbox marker)
+            is_prose_reference = not is_checkbox_clause and bool(re.search(
+                rf'(?:at|in|see|per|clause|far|dfars)\s+{re.escape(clause_num)}',
                 line_stripped,
                 re.IGNORECASE
             ))
             
-            # Check if this looks like a parent/standalone clause header
-            # Format: "52.212-5 Contract Terms and Conditions..."
-            is_standalone_clause = bool(re.match(
+            # Check if this looks like a standalone parent clause header
+            # Format: "52.212-5 Contract Terms and Conditions..." at start of line
+            is_standalone_header = bool(re.match(
                 rf'^\s*{re.escape(clause_num)}\s+[A-Z]',
                 line_stripped
-            ))
+            )) and not is_checkbox_clause
             
             clause_data = {
                 "number": clause_num,
                 "title": title,
                 "is_selected": is_selected,
-                "is_sub_clause": is_sub_clause,
+                "is_checkbox_clause": is_checkbox_clause,
                 "source_line": line_stripped[:250]
             }
             
-            # Track all unique clauses
-            if clause_num not in seen_clauses:
+            # Track all unique clauses (not references)
+            if clause_num not in seen_clauses and not is_prose_reference:
                 seen_clauses.add(clause_num)
                 result["all_clauses"].append(clause_data.copy())
             
-            # If this is a standalone/parent clause header, track it
-            if is_standalone_clause and not is_sub_clause:
+            # If this is a standalone header, track it as parent
+            if is_standalone_header:
                 current_parent_clause = clause_num
                 result["top_level_clauses"].append(clause_data.copy())
                 
@@ -2411,9 +2417,9 @@ def _extract_clauses_with_checkboxes(text_content: str) -> Dict[str, Any]:
                         "unselected_sub_clauses": []
                     }
             
-            # Process sub-clauses (those with X/XX or ___ markers)
-            if is_sub_clause or is_selected or is_checkbox_unselected:
-                parent = current_parent_clause or "unknown_parent"
+            # Process checkbox clauses
+            if is_checkbox_clause:
+                parent = current_parent_clause or "checkbox_list"
                 
                 if parent not in result["parent_clauses_with_selections"]:
                     result["parent_clauses_with_selections"][parent] = {
@@ -2423,11 +2429,20 @@ def _extract_clauses_with_checkboxes(text_content: str) -> Dict[str, Any]:
                     }
                 
                 if is_selected:
-                    result["selected_sub_clauses"].append(clause_data.copy())
-                    result["parent_clauses_with_selections"][parent]["selected_sub_clauses"].append(clause_data.copy())
+                    # Only add if not already added (avoid duplicates)
+                    if clause_num not in seen_selected:
+                        seen_selected.add(clause_num)
+                        result["selected_sub_clauses"].append(clause_data.copy())
+                        result["parent_clauses_with_selections"][parent]["selected_sub_clauses"].append(clause_data.copy())
+                        # Selected checkbox clauses are also top-level (they're in the contract)
+                        result["top_level_clauses"].append(clause_data.copy())
                 elif is_checkbox_unselected:
                     result["unselected_sub_clauses"].append(clause_data.copy())
                     result["parent_clauses_with_selections"][parent]["unselected_sub_clauses"].append(clause_data.copy())
+            
+            # Track prose references separately
+            elif is_prose_reference:
+                result["reference_mentions"].append(clause_data.copy())
     
     # Generate summary
     result["summary"] = {
@@ -2435,6 +2450,7 @@ def _extract_clauses_with_checkboxes(text_content: str) -> Dict[str, Any]:
         "total_top_level_clauses": len(result["top_level_clauses"]),
         "total_selected_sub_clauses": len(result["selected_sub_clauses"]),
         "total_unselected_sub_clauses": len(result["unselected_sub_clauses"]),
+        "total_reference_mentions": len(result["reference_mentions"]),
         "parent_clauses_count": len(result["parent_clauses_with_selections"])
     }
     
