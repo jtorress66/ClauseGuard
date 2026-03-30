@@ -368,6 +368,20 @@ export default function ContractDetail({ user }) {
                 )}
                 Generate Checklist
               </Button>
+              <Button
+                onClick={extractForAgiloft}
+                disabled={extracting}
+                variant="outline"
+                className="border-teal-600 text-teal-600 hover:bg-teal-50"
+                data-testid="extract-agiloft-btn"
+              >
+                {extracting ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <FileJson className="w-4 h-4 mr-2" />
+                )}
+                Extract for Agiloft
+              </Button>
             </div>
           </div>
         </div>
