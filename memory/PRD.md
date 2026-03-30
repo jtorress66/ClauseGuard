@@ -25,10 +25,16 @@ Build a Federal Clause Management app that helps government contractors manage F
   - Ignores clause numbers mentioned inside other clauses (e.g., 52.212-5 referencing 52.203-19)
   - Detects patterns like "52.xxx-xx Title" at start of lines
   - Filters out checkbox lists, numbered references, and "see/per/pursuant to" mentions
+  - **NEW:** Handles numbered list formats like "XX (1) 52.203-6" in contract documents
 - [x] **Rescan Clauses** button - Re-analyze existing contracts with improved detection
 - [x] AI-powered contract analysis
 - [x] Contract comparison (side-by-side)
 - [x] **Compliance Checklist Generator** - FIXED (2025-02-05) - Generates checklists from contract clauses
+- [x] **NEW: Agiloft Extraction Feature** - Extract clauses with checkbox detection for Agiloft KB upload
+  - Detects clauses marked with XX (selected) vs ___ (unselected)
+  - Groups sub-clauses by parent clause (e.g., clauses within 52.212-5)
+  - Exports structured JSON file with clause numbers, titles, types, and acquisition.gov URLs
+  - Endpoints: `/api/contracts/{id}/extract-for-agiloft` and `/api/contracts/{id}/export-clauses-json`
 
 ### Flowdown Analysis
 - [x] Contract type and value-based filtering
