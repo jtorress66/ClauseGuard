@@ -2197,6 +2197,12 @@ def _detect_clause_headers(text_content: str) -> List[str]:
             if re.search(rf'{re.escape(clause_num)}\s+[A-Z][A-Za-z\s\-]+(?:\(|$)', line_stripped):
                 detected_clauses.add(clause_num)
                 continue
+            
+            # ACCEPT: Clause number followed by a comma and title (common format in contracts)
+            # e.g., "52.203-6, Restrictions on Subcontractor Sales to the Government"
+            if re.search(rf'{re.escape(clause_num)},\s+[A-Z]', line_stripped):
+                detected_clauses.add(clause_num)
+                continue
     
     return sorted(list(detected_clauses))
 
