@@ -509,6 +509,97 @@ export default function ContractDetail({ user }) {
                 )}
               </div>
             </div>
+
+            {/* Agiloft Extraction Results */}
+            {agiloftExtraction && (
+              <div className="bg-white rounded-xl border border-teal-200">
+                <div className="p-6 border-b border-teal-100 bg-teal-50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <FileJson className="w-5 h-5 text-teal-600" />
+                      <h2 className="font-heading font-bold text-lg text-teal-900">
+                        Agiloft Extraction Results
+                      </h2>
+                    </div>
+                    <Button
+                      onClick={downloadAgiloftJson}
+                      size="sm"
+                      className="bg-teal-600 hover:bg-teal-700"
+                      data-testid="download-json-btn"
+                    >
+                      <Download className="w-4 h-4 mr-2" />
+                      Download JSON
+                    </Button>
+                  </div>
+                </div>
+                
+                <div className="p-6 space-y-6">
+                  {/* Summary Stats */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-slate-50 rounded-lg p-4">
+                      <p className="text-2xl font-bold text-teal-600">
+                        {agiloftExtraction.extraction?.summary?.total_selected_sub_clauses || 0}
+                      </p>
+                      <p className="text-sm text-slate-600">Selected Clauses (Checked)</p>
+                    </div>
+                    <div className="bg-slate-50 rounded-lg p-4">
+                      <p className="text-2xl font-bold text-slate-600">
+                        {(agiloftExtraction.extraction?.summary?.total_by_reference || 0) + 
+                         (agiloftExtraction.extraction?.summary?.total_by_full_text || 0)}
+                      </p>
+                      <p className="text-sm text-slate-600">Total Incorporated</p>
+                    </div>
+                  </div>
+
+                  {/* Selected Clauses (Checked) */}
+                  {agiloftExtraction.extraction?.all_selected_clauses?.length > 0 && (
+                    <div>
+                      <h3 className="font-semibold text-navy-900 mb-3 flex items-center gap-2">
+                        <CheckCircle className="w-4 h-4 text-green-600" />
+                        Selected Clauses (XX marked)
+                      </h3>
+                      <div className="max-h-64 overflow-y-auto space-y-2">
+                        {agiloftExtraction.extraction.all_selected_clauses.map((clause, i) => (
+                          <div 
+                            key={i}
+                            className="flex items-start gap-3 p-3 bg-green-50 rounded-lg border border-green-200"
+                          >
+                            <CheckCircle className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
+                            <div>
+                              <span className="font-medium text-green-800">{clause.number}</span>
+                              {(clause.db_title || clause.title) && (
+                                <p className="text-sm text-green-700">{clause.db_title || clause.title}</p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Parent Clauses with Selections */}
+                  {Object.keys(agiloftExtraction.extraction?.parent_clauses_with_selections || {}).length > 0 && (
+                    <div>
+                      <h3 className="font-semibold text-navy-900 mb-3">Parent Clauses with Sub-selections</h3>
+                      <div className="space-y-3">
+                        {Object.entries(agiloftExtraction.extraction.parent_clauses_with_selections)
+                          .filter(([_, data]) => data.selected_sub_clauses?.length > 0)
+                          .map(([parentNum, data]) => (
+                            <div key={parentNum} className="bg-slate-50 rounded-lg p-4">
+                              <p className="font-medium text-navy-800 mb-2">
+                                {parentNum} {data.title && `- ${data.title}`}
+                              </p>
+                              <p className="text-sm text-slate-600">
+                                {data.selected_sub_clauses?.length || 0} selected, {data.unselected_sub_clauses?.length || 0} unselected
+                              </p>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Sidebar */}
