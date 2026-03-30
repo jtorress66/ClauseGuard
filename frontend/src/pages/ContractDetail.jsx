@@ -154,6 +154,50 @@ export default function ContractDetail({ user }) {
     }
   };
 
+  const extractForAgiloft = async () => {
+    setExtracting(true);
+    try {
+      const response = await fetch(`${API}/contracts/${contractId}/extract-for-agiloft`, {
+        method: "POST",
+        credentials: "include"
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setAgiloftExtraction(data);
+        toast.success(`Extracted ${data.extraction?.summary?.total_selected_sub_clauses || 0} selected clauses`);
+      } else {
+        toast.error("Failed to extract clauses");
+      }
+    } catch (error) {
+      toast.error("Failed to extract clauses");
+    } finally {
+      setExtracting(false);
+    }
+  };
+
+  const downloadAgiloftJson = async () => {
+    try {
+      const response = await fetch(`${API}/contracts/${contractId}/export-clauses-json`, {
+        credentials: "include"
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `agiloft_clauses_${contract?.filename || contractId}.json`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        toast.success("JSON file downloaded");
+      } else {
+        toast.error("Failed to download JSON");
+      }
+    } catch (error) {
+      toast.error("Failed to download JSON");
+    }
+  };
+
   const updateChecklistItem = async (index, status) => {
     if (!checklist) return;
 
