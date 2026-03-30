@@ -2148,17 +2148,29 @@ def _detect_clause_headers(text_content: str) -> List[str]:
             if is_reference:
                 continue
             
-            # SKIP if the clause number is in a numbered list format like "(1) 52.203-19"
-            # This is common in clauses like 52.212-5 that list other clauses
-            if re.search(rf'\(\s*\d+\s*\)\s*{re.escape(clause_num)}', line_stripped):
+            # Check if clause number is in a list format like "(1) 52.203-19" or "XX (1) 52.203-19"
+            # These could be either:
+            # A) Actual clause headers in a contract document (ACCEPT these)
+            # B) References within 52.212-5 checkbox sections (REJECT these)
+            list_format_match = re.search(rf'(?:XX|___?|____)?\s*\(\s*\d+\s*\)\s*{re.escape(clause_num)}', line_stripped)
+            if list_format_match:
+                # If in a checkbox section, skip (these are references)
+                if inside_checkbox_section:
+                    continue
+                # Otherwise, this is likely an actual clause header - ACCEPT it
+                # This handles formats like "XX (1) 52.203-6, Restrictions on..." 
+                # or "___ (2) 52.204-23, Prohibition on..."
+                detected_clauses.add(clause_num)
                 continue
             
             # SKIP if the clause number is in a lettered list format like "(a) 52.203-19"
-            if re.search(rf'\(\s*[a-z]\s*\)\s*{re.escape(clause_num)}', line_stripped, re.IGNORECASE):
+            # BUT only if we're in a checkbox section
+            if inside_checkbox_section and re.search(rf'\(\s*[a-z]\s*\)\s*{re.escape(clause_num)}', line_stripped, re.IGNORECASE):
                 continue
             
-            # SKIP if the clause number is in a Roman numeral list format like "(ii) 52.203-19", "(xvii) 52.203-19"
-            if re.search(rf'\(\s*[ivxlcdm]+\s*\)\s*{re.escape(clause_num)}', line_stripped, re.IGNORECASE):
+            # SKIP if the clause number is in a Roman numeral list format like "(ii) 52.203-19"
+            # BUT only if we're in a checkbox section
+            if inside_checkbox_section and re.search(rf'\(\s*[ivxlcdm]+\s*\)\s*{re.escape(clause_num)}', line_stripped, re.IGNORECASE):
                 continue
             
             # ACCEPT: Clause number appears at the start of a line (with optional whitespace)
