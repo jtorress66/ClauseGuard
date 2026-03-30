@@ -31,8 +31,10 @@ Build a Federal Clause Management app that helps government contractors manage F
 - [x] Contract comparison (side-by-side)
 - [x] **Compliance Checklist Generator** - FIXED (2025-02-05) - Generates checklists from contract clauses
 - [x] **NEW: Agiloft Extraction Feature** - Extract clauses with checkbox detection for Agiloft KB upload
-  - Detects clauses marked with XX (selected) vs ___ (unselected)
-  - Groups sub-clauses by parent clause (e.g., clauses within 52.212-5)
+  - Detects clauses marked with X or XX (selected) vs ___ (unselected)
+  - Selected checkbox clauses are treated as "top-level" clauses for upload
+  - Unselected clauses are tracked but NOT included in the upload list
+  - Prose references (like "see FAR 52.xxx") are filtered out
   - Exports structured JSON file with clause numbers, titles, types, and acquisition.gov URLs
   - Endpoints: `/api/contracts/{id}/extract-for-agiloft` and `/api/contracts/{id}/export-clauses-json`
 
