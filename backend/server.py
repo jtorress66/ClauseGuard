@@ -2303,12 +2303,12 @@ async def rescan_contract_clauses(contract_id: str, request: Request):
 
 def _extract_clauses_with_checkboxes(text_content: str) -> Dict[str, Any]:
     """
-    Extract clauses from contract document with checkbox detection.
+    Extract ALL clauses from contract document with checkbox detection.
     
     Identifies:
-    1. Top-level incorporated clauses (by reference or full text)
-    2. Sub-clauses within parent clauses (like those in 52.212-5) 
-    3. Which sub-clauses are SELECTED (marked with XX, X, or ✓)
+    1. ALL top-level clauses in the document (standalone clauses like 52.212-5)
+    2. Sub-clauses within parent clauses that are SELECTED (marked with X or XX)
+    3. Sub-clauses that are UNSELECTED (marked with ___)
     
     Returns structured data for Agiloft KB upload.
     """
@@ -2317,30 +2317,20 @@ def _extract_clauses_with_checkboxes(text_content: str) -> Dict[str, Any]:
     CLAUSE_NUM_PATTERN = r'((?:52|252)\.\d{3}(?:-\d{1,4})?)'
     
     result = {
-        "incorporated_by_reference": [],
-        "incorporated_by_full_text": [],
+        "all_clauses": [],  # ALL clauses found in document
+        "top_level_clauses": [],  # Standalone clauses (not sub-clauses)
+        "selected_sub_clauses": [],  # Sub-clauses marked with X or XX
+        "unselected_sub_clauses": [],  # Sub-clauses marked with ___
         "parent_clauses_with_selections": {},
-        "all_selected_clauses": [],
         "summary": {}
     }
     
     lines = text_content.split('\n')
-    
-    # Track current section
-    current_section = None
+    seen_clauses = set()  # Track unique clauses
     current_parent_clause = None
     
     for i, line in enumerate(lines):
         line_stripped = line.strip()
-        line_lower = line_stripped.lower()
-        
-        # Detect section headers
-        if 'incorporated by reference' in line_lower:
-            current_section = 'reference'
-            current_parent_clause = None
-        elif 'incorporated by full text' in line_lower or 'full text' in line_lower:
-            current_section = 'full_text'
-            current_parent_clause = None
         
         # Find clause numbers on this line
         clause_matches = re.findall(CLAUSE_NUM_PATTERN, line_stripped)
@@ -2351,50 +2341,69 @@ def _extract_clauses_with_checkboxes(text_content: str) -> Dict[str, Any]:
         for clause_num in clause_matches:
             clause_num = clause_num.replace('–', '-').replace('—', '-')
             
-            # Extract title if present (text after clause number before parenthesis or date)
+            # Extract title if present (text after clause number, comma, then title)
             title_match = re.search(
-                rf'{re.escape(clause_num)}[,\s]+([A-Z][^(]+?)(?:\s*\(|\s*$)',
+                rf'{re.escape(clause_num)}[,\s]+([A-Z][^(\n]+?)(?:\s*\(|\s*$)',
                 line_stripped
             )
             title = title_match.group(1).strip() if title_match else ""
             
-            # Check if this is a SELECTED clause (marked with XX, X, ✓)
-            # Pattern: "XX (1) 52.xxx-xx" or "X (1) 52.xxx-xx" or checkmark patterns
+            # Clean up title - remove trailing dates like "(Jun 2020)"
+            title = re.sub(r'\s*\([A-Z][a-z]{2}\s+\d{4}\)\s*$', '', title).strip()
+            
+            # Check if this is a SELECTED clause (marked with X or XX at the start)
+            # Pattern: "XX (1) 52.xxx-xx" or "X (1) 52.xxx-xx" 
+            # Must be X or XX followed by space or number, not part of another word
             is_selected = bool(re.search(
-                rf'(?:^|\s)(?:XX|X|✓|✔)\s*(?:\(\d+\))?\s*{re.escape(clause_num)}',
-                line_stripped,
-                re.IGNORECASE
+                rf'(?:^|\s)(?:XX?)\s+(?:\(\d+\)\s*)?{re.escape(clause_num)}',
+                line_stripped
             ))
+            
+            # Also check for checkmark patterns
+            if not is_selected:
+                is_selected = bool(re.search(
+                    rf'(?:^|\s)(?:✓|✔)\s*(?:\(\d+\)\s*)?{re.escape(clause_num)}',
+                    line_stripped
+                ))
             
             # Check if this is an UNSELECTED checkbox clause (marked with ___ or [ ])
             is_checkbox_unselected = bool(re.search(
-                rf'(?:^|\s)(?:___?|____|\[\s*\])\s*(?:\(\d+\))?\s*{re.escape(clause_num)}',
+                rf'(?:^|\s)(?:___?|____|\[\s*\])\s*(?:\(\d+\)\s*)?{re.escape(clause_num)}',
                 line_stripped
             ))
             
-            # Check if this looks like a parent clause header (clause at start with title)
-            is_parent_header = bool(re.match(
-                rf'^\s*{re.escape(clause_num)}\s+[A-Z]',
-                line_stripped
-            ))
-            
-            # Determine if this is a sub-clause (has numbered prefix like "(1)", "(a)", etc.)
+            # Check if this is a sub-clause (has numbered prefix like "(1)", "(a)", etc.)
             is_sub_clause = bool(re.search(
-                rf'\(\s*(?:\d+|[a-z]|[ivxlcdm]+)\s*\)\s*{re.escape(clause_num)}',
+                rf'(?:XX?|___?|____)\s*\(\s*(?:\d+|[a-z]|[ivxlcdm]+)\s*\)\s*{re.escape(clause_num)}',
                 line_stripped,
                 re.IGNORECASE
+            ))
+            
+            # Check if this looks like a parent/standalone clause header
+            # Format: "52.212-5 Contract Terms and Conditions..."
+            is_standalone_clause = bool(re.match(
+                rf'^\s*{re.escape(clause_num)}\s+[A-Z]',
+                line_stripped
             ))
             
             clause_data = {
                 "number": clause_num,
                 "title": title,
                 "is_selected": is_selected,
-                "source_line": line_stripped[:200]
+                "is_sub_clause": is_sub_clause,
+                "source_line": line_stripped[:250]
             }
             
-            # If this is a parent clause header, track it
-            if is_parent_header and not is_sub_clause:
+            # Track all unique clauses
+            if clause_num not in seen_clauses:
+                seen_clauses.add(clause_num)
+                result["all_clauses"].append(clause_data.copy())
+            
+            # If this is a standalone/parent clause header, track it
+            if is_standalone_clause and not is_sub_clause:
                 current_parent_clause = clause_num
+                result["top_level_clauses"].append(clause_data.copy())
+                
                 if clause_num not in result["parent_clauses_with_selections"]:
                     result["parent_clauses_with_selections"][clause_num] = {
                         "title": title,
@@ -2402,9 +2411,8 @@ def _extract_clauses_with_checkboxes(text_content: str) -> Dict[str, Any]:
                         "unselected_sub_clauses": []
                     }
             
-            # Process based on whether it's a sub-clause or standalone
-            if is_sub_clause or is_checkbox_unselected or is_selected:
-                # This is a sub-clause within a parent clause
+            # Process sub-clauses (those with X/XX or ___ markers)
+            if is_sub_clause or is_selected or is_checkbox_unselected:
                 parent = current_parent_clause or "unknown_parent"
                 
                 if parent not in result["parent_clauses_with_selections"]:
@@ -2415,21 +2423,18 @@ def _extract_clauses_with_checkboxes(text_content: str) -> Dict[str, Any]:
                     }
                 
                 if is_selected:
-                    result["parent_clauses_with_selections"][parent]["selected_sub_clauses"].append(clause_data)
-                    result["all_selected_clauses"].append(clause_data)
+                    result["selected_sub_clauses"].append(clause_data.copy())
+                    result["parent_clauses_with_selections"][parent]["selected_sub_clauses"].append(clause_data.copy())
                 elif is_checkbox_unselected:
-                    result["parent_clauses_with_selections"][parent]["unselected_sub_clauses"].append(clause_data)
-            
-            elif current_section == 'reference':
-                result["incorporated_by_reference"].append(clause_data)
-            elif current_section == 'full_text':
-                result["incorporated_by_full_text"].append(clause_data)
+                    result["unselected_sub_clauses"].append(clause_data.copy())
+                    result["parent_clauses_with_selections"][parent]["unselected_sub_clauses"].append(clause_data.copy())
     
     # Generate summary
     result["summary"] = {
-        "total_by_reference": len(result["incorporated_by_reference"]),
-        "total_by_full_text": len(result["incorporated_by_full_text"]),
-        "total_selected_sub_clauses": len(result["all_selected_clauses"]),
+        "total_all_clauses": len(result["all_clauses"]),
+        "total_top_level_clauses": len(result["top_level_clauses"]),
+        "total_selected_sub_clauses": len(result["selected_sub_clauses"]),
+        "total_unselected_sub_clauses": len(result["unselected_sub_clauses"]),
         "parent_clauses_count": len(result["parent_clauses_with_selections"])
     }
     
