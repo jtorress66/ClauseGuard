@@ -2447,9 +2447,10 @@ async def extract_clauses_for_agiloft(contract_id: str, request: Request):
     Extract clauses from contract with checkbox detection for Agiloft KB upload.
     
     Returns JSON with:
-    - Incorporated clauses (by reference and full text)
-    - Parent clauses with their selected/unselected sub-clauses
-    - All selected clauses for easy processing
+    - ALL clauses found in the document
+    - Top-level/standalone clauses (like 52.212-5)
+    - Selected sub-clauses (marked with X or XX)
+    - Unselected sub-clauses (marked with ___)
     """
     user = await require_auth(request)
     
@@ -2467,9 +2468,9 @@ async def extract_clauses_for_agiloft(contract_id: str, request: Request):
     extraction_result = _extract_clauses_with_checkboxes(text_content)
     
     # Enrich with clause details from our database
-    for clause_list in [extraction_result["incorporated_by_reference"], 
-                        extraction_result["incorporated_by_full_text"],
-                        extraction_result["all_selected_clauses"]]:
+    for clause_list in [extraction_result["all_clauses"], 
+                        extraction_result["top_level_clauses"],
+                        extraction_result["selected_sub_clauses"]]:
         for clause_data in clause_list:
             db_clause = await db.clauses.find_one({"number": clause_data["number"]}, {"_id": 0})
             if db_clause:
@@ -2477,21 +2478,35 @@ async def extract_clauses_for_agiloft(contract_id: str, request: Request):
                 clause_data["type"] = db_clause.get("type", "")
                 clause_data["url"] = db_clause.get("url", "")
     
+    # Build Agiloft-ready data: ALL top-level clauses + selected sub-clauses
+    agiloft_clauses = []
+    
+    # Add all top-level clauses
+    for c in extraction_result["top_level_clauses"]:
+        agiloft_clauses.append({
+            "clause_number": c["number"],
+            "clause_title": c.get("db_title") or c.get("title", ""),
+            "clause_type": c.get("type", "FAR" if c["number"].startswith("52.") else "DFARS"),
+            "category": "top_level",
+            "is_selected": True  # Top-level clauses are always "selected" (they're in the contract)
+        })
+    
+    # Add selected sub-clauses
+    for c in extraction_result["selected_sub_clauses"]:
+        agiloft_clauses.append({
+            "clause_number": c["number"],
+            "clause_title": c.get("db_title") or c.get("title", ""),
+            "clause_type": c.get("type", "FAR" if c["number"].startswith("52.") else "DFARS"),
+            "category": "selected_sub_clause",
+            "is_selected": True
+        })
+    
     return {
         "contract_id": contract_id,
         "filename": contract.get("filename", ""),
         "extraction": extraction_result,
         "agiloft_upload_ready": {
-            "clauses": [
-                {
-                    "clause_number": c["number"],
-                    "clause_title": c.get("db_title") or c.get("title", ""),
-                    "clause_type": c.get("type", "FAR" if c["number"].startswith("52.") else "DFARS"),
-                    "source": "contract_extraction",
-                    "is_selected": c.get("is_selected", True)
-                }
-                for c in extraction_result["all_selected_clauses"]
-            ]
+            "clauses": agiloft_clauses
         }
     }
 
