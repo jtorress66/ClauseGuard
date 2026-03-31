@@ -19,7 +19,7 @@ from datetime import datetime
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 if not BASE_URL:
     # Fallback for testing
-    BASE_URL = "https://clausemanager.preview.emergentagent.com"
+    BASE_URL = "https://clause-scan.preview.emergentagent.com"
 
 # Test session token created for regression testing
 SESSION_TOKEN = "test_session_regression_1768429393344"

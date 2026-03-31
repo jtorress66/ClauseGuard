@@ -214,27 +214,54 @@ async def get_ai_response(prompt: str, system_message: str = "You are a helpful 
 
 # ==================== Acquisition.gov Integration ====================
 
+_dfars_page_cache: Dict[str, Any] = {}
+
+async def _get_dfars_page_soup():
+    """Fetch and cache the DFARS Part 252 page (single large page with all clauses)."""
+    from bs4 import BeautifulSoup
+    
+    cache_key = "dfars_part_252"
+    if cache_key in _dfars_page_cache:
+        cache_entry = _dfars_page_cache[cache_key]
+        age = (datetime.now(timezone.utc) - cache_entry["fetched_at"]).total_seconds()
+        if age < 3600:  # Cache for 1 hour
+            return cache_entry["soup"]
+    
+    dfars_url = "https://www.acquisition.gov/dfars/part-252-solicitation-provisions-and-contract-clauses"
+    logger.info(f"Fetching DFARS Part 252 page: {dfars_url}")
+    
+    async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+        client.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        })
+        response = await client.get(dfars_url)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            _dfars_page_cache[cache_key] = {
+                "soup": soup,
+                "fetched_at": datetime.now(timezone.utc)
+            }
+            return soup
+    return None
+
+
 async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict[str, Any]]:
     """Fetch clause details from acquisition.gov with proper formatting preservation.
     
-    Based on the desktop app's Federal_Clauses_Downloader.py logic:
-    - Uses BeautifulSoup for HTML parsing
-    - Preserves indentation from lists, CSS styles, and class attributes
-    - Properly handles nested lists and paragraphs
+    - FAR clauses: fetched from individual pages (e.g., /far/52.212-5)
+    - DFARS clauses: extracted from the combined Part 252 page using anchor IDs
     """
     try:
         from bs4 import BeautifulSoup, Tag
         import re
 
-        # Constants for indentation (from desktop app)
         INDENT_SPACES = 4
         
         def _norm_spaces(s: str) -> str:
-            """Normalize Unicode spaces to regular spaces"""
             return s.replace('\u00A0', ' ').replace('\u202F', ' ').replace('\xa0', ' ')
         
         def _get_list_depth(tag: Tag) -> int:
-            """Calculate how deep a tag is in nested lists"""
             depth = 0
             parent = tag.parent
             while parent:
@@ -244,12 +271,9 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
             return depth
         
         def _get_style_indent(tag: Tag) -> int:
-            """Extract indentation level from style attribute"""
             style = tag.get('style', '')
             if not style:
                 return 0
-            
-            # Look for margin-left or text-indent
             indent = 0
             margin_match = re.search(r'margin-left:\s*(\d+(?:\.\d+)?)(em|px)', style)
             if margin_match:
@@ -258,11 +282,10 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                 if unit == 'em':
                     indent = int(value)
                 elif unit == 'px':
-                    indent = int(value / 16)  # Approximate em conversion
+                    indent = int(value / 16)
             return indent
         
         def _get_class_indent(tag: Tag) -> int:
-            """Extract indentation from class names like 'indent1', 'list2'"""
             classes = tag.get('class', [])
             if isinstance(classes, str):
                 classes = classes.split()
@@ -273,10 +296,6 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
             return 0
         
         def text_with_indents(root: Tag) -> str:
-            """Extract text from HTML while preserving indentation structure.
-            
-            Based on the desktop app's text_with_indents function.
-            """
             lines = []
             
             def process_element(elem, base_indent=0):
@@ -289,25 +308,19 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                 if not isinstance(elem, Tag):
                     return
                 
-                # Skip non-content elements
                 if elem.name in ('script', 'style', 'nav', 'aside', 'footer', 'button'):
                     return
                 
-                # Calculate indentation
                 list_depth = _get_list_depth(elem)
                 style_indent = _get_style_indent(elem)
                 class_indent = _get_class_indent(elem)
                 indent = base_indent + max(list_depth, style_indent, class_indent)
                 
-                # Handle different element types
                 if elem.name in ('ul', 'ol'):
-                    # Process list items with increased indentation
                     for li in elem.find_all('li', recursive=False):
                         process_element(li, indent)
                 
                 elif elem.name == 'li':
-                    # Get list item text and any nested content
-                    # First, get direct text
                     direct_text = []
                     for child in elem.children:
                         if isinstance(child, str):
@@ -322,7 +335,6 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                     if direct_text:
                         lines.append(' ' * (indent * INDENT_SPACES) + ' '.join(direct_text))
                     
-                    # Process nested lists
                     for nested in elem.find_all(['ul', 'ol'], recursive=False):
                         process_element(nested, indent + 1)
                 
@@ -330,10 +342,9 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                     text = _norm_spaces(elem.get_text(' ', strip=True))
                     if text:
                         lines.append(' ' * (indent * INDENT_SPACES) + text)
-                        lines.append('')  # Add blank line after paragraph
+                        lines.append('')
                 
                 elif elem.name in ('div', 'section', 'article'):
-                    # Process children
                     for child in elem.children:
                         if isinstance(child, Tag):
                             process_element(child, indent)
@@ -349,49 +360,76 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                     lines.append('')
                 
                 elif elem.name == 'table':
-                    # Handle tables - extract as indented text
                     for row in elem.find_all('tr'):
                         cells = [_norm_spaces(td.get_text(' ', strip=True)) for td in row.find_all(['td', 'th'])]
                         if any(cells):
                             lines.append(' ' * (indent * INDENT_SPACES) + ' | '.join(cells))
                 
                 else:
-                    # For other elements, just get text
                     text = _norm_spaces(elem.get_text(' ', strip=True))
                     if text and len(text) > 5:
                         lines.append(' ' * (indent * INDENT_SPACES) + text)
             
             process_element(root)
             
-            # Clean up the result
             result = '\n'.join(lines)
-            # Collapse multiple blank lines into two
             result = re.sub(r'\n{3,}', '\n\n', result)
             return result.strip()
 
-        # Determine if FAR or DFARS and build the direct clause URL
-        if clause_number.startswith("252"):
-            clause_type = "DFARS"
-            clause_url = f"https://www.acquisition.gov/dfars/{clause_number.lower()}"
-        else:
-            clause_type = "FAR"
-            clause_url = f"https://www.acquisition.gov/far/{clause_number.lower()}"
+        is_dfars = clause_number.startswith("252")
+        clause_type = "DFARS" if is_dfars else "FAR"
+        clause_url = f"https://www.acquisition.gov/dfars/part-252-solicitation-provisions-and-contract-clauses#DFARS_{clause_number}" if is_dfars else f"https://www.acquisition.gov/far/{clause_number.lower()}"
 
-        logger.info(f"Fetching clause from: {clause_url}")
+        logger.info(f"Fetching clause {clause_number} ({clause_type}) from acquisition.gov")
 
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-            client.headers.update({
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            })
+        if is_dfars:
+            # DFARS: all clauses are on a single combined page, find by anchor ID
+            soup = await _get_dfars_page_soup()
+            if not soup:
+                logger.warning(f"Failed to fetch DFARS Part 252 page")
+                return None
             
-            response = await client.get(clause_url)
-            logger.info(f"Response status: {response.status_code}")
+            # Find the article element with id="DFARS_{clause_number}"
+            anchor_id = f"DFARS_{clause_number}"
+            clause_article = soup.find('article', id=anchor_id)
+            
+            if not clause_article:
+                logger.warning(f"DFARS clause {clause_number} not found on page (anchor: {anchor_id})")
+                return None
+            
+            # Extract title from the heading inside the article
+            title = ""
+            heading = clause_article.find(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+            if heading:
+                title = _norm_spaces(heading.get_text(' ', strip=True))
+                # Remove the clause number prefix
+                title = re.sub(r'^\d+\.\d+-\d+\s*', '', title).strip()
+                title = re.sub(r'^[-–—.]\s*', '', title).strip()
+            
+            # Extract text from the body div
+            full_text = ""
+            body_div = clause_article.find('div', class_='body')
+            if body_div:
+                full_text = text_with_indents(body_div)
+            else:
+                full_text = text_with_indents(clause_article)
+        else:
+            # FAR: each clause has its own page
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                client.headers.update({
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                })
+                
+                response = await client.get(clause_url)
+                logger.info(f"FAR response status: {response.status_code}")
 
-            if response.status_code == 200:
+                if response.status_code != 200:
+                    logger.warning(f"Failed to fetch {clause_number}: HTTP {response.status_code}")
+                    return None
+                
                 soup = BeautifulSoup(response.text, 'html.parser')
 
-                # Extract title from page title or h1
                 title = ""
                 page_title = soup.find('title')
                 if page_title:
@@ -407,21 +445,18 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                         title = h1.get_text().strip()
                         title = re.sub(r'^\d+\.\d+-\d+\s*', '', title)
 
-                # Find the main content article
                 main_article = soup.find('article', class_='nested0')
                 if not main_article:
                     main_article = soup.find('article')
                 
                 full_text = ""
                 if main_article:
-                    # Use text_with_indents to preserve formatting
                     body_div = main_article.find('div', class_='body')
                     if body_div:
                         full_text = text_with_indents(body_div)
                     else:
                         full_text = text_with_indents(main_article)
                 
-                # If still no content, fallback to simpler extraction
                 if not full_text or len(full_text) < 100:
                     text_parts = []
                     for p in soup.find_all('p'):
@@ -429,64 +464,59 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                         if text and len(text) > 20:
                             text_parts.append(text)
                     full_text = '\n\n'.join(text_parts)
-                
-                # Limit size
-                full_text = full_text[:50000]
 
-                logger.info(f"Extracted title: {title[:80] if title else 'N/A'}...")
-                logger.info(f"Extracted text length: {len(full_text)} chars")
-                
-                # Skip ONLY if the clause itself is reserved (not navigation links)
-                # Reserved clauses have titles like "52.204-5 Reserved" or "[Reserved]"
-                title_lower = title.lower() if title else ""
-                is_reserved = (
-                    title_lower.endswith("reserved") or
-                    title_lower.endswith("[reserved]") or
-                    title_lower == "reserved" or
-                    "is reserved" in title_lower
-                )
-                
-                if is_reserved:
-                    logger.info(f"Clause {clause_number} is reserved - skipping")
-                    return None
+        # Limit size
+        full_text = full_text[:50000]
 
-                # Extract keywords from text
-                keywords = []
-                keyword_patterns = [
-                    r'small business', r'cybersecurity', r'NIST', r'compliance',
-                    r'subcontract', r'flowdown', r'disclosure', r'payment',
-                    r'equal opportunity', r'Buy American', r'domestic', r'foreign',
-                    r'technical data', r'intellectual property', r'CUI', r'classified'
-                ]
-                for pattern in keyword_patterns:
-                    if re.search(pattern, full_text, re.IGNORECASE):
-                        keywords.append(pattern.replace(r'\s+', ' '))
+        logger.info(f"Extracted title: {title[:80] if title else 'N/A'}...")
+        logger.info(f"Extracted text length: {len(full_text)} chars")
+        
+        # Skip reserved clauses
+        title_lower = title.lower() if title else ""
+        is_reserved = (
+            title_lower.endswith("reserved") or
+            title_lower.endswith("[reserved]") or
+            title_lower == "reserved" or
+            "is reserved" in title_lower
+        )
+        
+        if is_reserved:
+            logger.info(f"Clause {clause_number} is reserved - skipping")
+            return None
 
-                # Determine flowdown requirement
-                flowdown_required = bool(re.search(
-                    r'flow.?down|subcontract|lower.?tier|prime contractor shall',
-                    full_text, re.IGNORECASE
-                ))
+        # Extract keywords
+        keywords = []
+        keyword_patterns = [
+            r'small business', r'cybersecurity', r'NIST', r'compliance',
+            r'subcontract', r'flowdown', r'disclosure', r'payment',
+            r'equal opportunity', r'Buy American', r'domestic', r'foreign',
+            r'technical data', r'intellectual property', r'CUI', r'classified'
+        ]
+        for pattern in keyword_patterns:
+            if re.search(pattern, full_text, re.IGNORECASE):
+                keywords.append(pattern.replace(r'\s+', ' '))
 
-                return {
-                    "clause_id": str(uuid.uuid4()),
-                    "number": clause_number,
-                    "title": title or f"Clause {clause_number}",
-                    "type": clause_type,
-                    "text": full_text if full_text and len(full_text) > 100 else f"Content available at: {clause_url}",
-                    "summary": None,
-                    "flowdown_required": flowdown_required,
-                    "contract_types": [],
-                    "threshold_amount": None,
-                    "keywords": keywords[:10],
-                    "last_updated": datetime.now(timezone.utc).isoformat(),
-                    "source": "acquisition.gov",
-                    "source_url": clause_url
-                }
+        flowdown_required = bool(re.search(
+            r'flow.?down|subcontract|lower.?tier|prime contractor shall',
+            full_text, re.IGNORECASE
+        ))
 
-            logger.warning(f"Failed to fetch {clause_number}: HTTP {response.status_code}")
+        return {
+            "clause_id": str(uuid.uuid4()),
+            "number": clause_number,
+            "title": title or f"Clause {clause_number}",
+            "type": clause_type,
+            "text": full_text if full_text and len(full_text) > 100 else f"Content available at: {clause_url}",
+            "summary": None,
+            "flowdown_required": flowdown_required,
+            "contract_types": [],
+            "threshold_amount": None,
+            "keywords": keywords[:10],
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+            "source": "acquisition.gov",
+            "source_url": clause_url
+        }
 
-        return None
     except Exception as e:
         logger.error(f"Error fetching from acquisition.gov: {e}")
         import traceback
@@ -850,53 +880,66 @@ def _suppress_dita_list_tags(dita_content: str) -> str:
 async def fetch_clause_html_from_acquisition_gov(clause_number: str) -> Optional[str]:
     """
     Fetch clause content as DITA-style HTML from acquisition.gov for proper formatting in Agiloft.
-    The HTML preserves indentation structure using inline styles.
+    - FAR clauses: fetched from individual pages
+    - DFARS clauses: extracted from combined Part 252 page using anchor IDs
     """
     from bs4 import BeautifulSoup
     
     try:
-        # Determine if FAR or DFARS and build the direct clause URL
-        if clause_number.startswith("252"):
-            clause_url = f"https://www.acquisition.gov/dfars/{clause_number.lower()}"
+        is_dfars = clause_number.startswith("252")
+
+        if is_dfars:
+            soup = await _get_dfars_page_soup()
+            if not soup:
+                logger.warning(f"Failed to fetch DFARS Part 252 page for HTML extraction")
+                return None
+            
+            anchor_id = f"DFARS_{clause_number}"
+            clause_article = soup.find('article', id=anchor_id)
+            if not clause_article:
+                logger.warning(f"DFARS clause {clause_number} not found (anchor: {anchor_id})")
+                return None
+            
+            body_div = clause_article.find('div', class_='body')
+            if body_div:
+                for tag in body_div.find_all(['script', 'style', 'nav', 'aside', 'button']):
+                    tag.decompose()
+                html_content = str(body_div)
+                html_content = format_dita_html_for_agiloft(html_content)
+                logger.info(f"Extracted DFARS DITA HTML length: {len(html_content)} chars")
+                return html_content
+            return None
         else:
             clause_url = f"https://www.acquisition.gov/far/{clause_number.lower()}"
+            logger.info(f"Fetching DITA HTML from: {clause_url}")
 
-        logger.info(f"Fetching DITA HTML from: {clause_url}")
-
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-            client.headers.update({
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            })
-            
-            response = await client.get(clause_url)
-
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-
-                # Find the main content body div with DITA structure
-                body_div = soup.find('div', class_='body')
-                if not body_div:
-                    article = soup.find('article', class_='nested0')
-                    if article:
-                        body_div = article.find('div', class_='body')
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                client.headers.update({
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                })
                 
-                if body_div:
-                    # Remove scripts and non-content elements
-                    for tag in body_div.find_all(['script', 'style', 'nav', 'aside', 'button']):
-                        tag.decompose()
+                response = await client.get(clause_url)
+
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.text, 'html.parser')
+
+                    body_div = soup.find('div', class_='body')
+                    if not body_div:
+                        article = soup.find('article', class_='nested0')
+                        if article:
+                            body_div = article.find('div', class_='body')
                     
-                    # Get the raw HTML
-                    html_content = str(body_div)
-                    
-                    # Apply DITA formatting transformations
-                    html_content = format_dita_html_for_agiloft(html_content)
-                    
-                    logger.info(f"Extracted and formatted DITA HTML length: {len(html_content)} chars")
-                    return html_content
-            
-            logger.warning(f"Failed to fetch HTML for {clause_number}: HTTP {response.status_code}")
-            return None
+                    if body_div:
+                        for tag in body_div.find_all(['script', 'style', 'nav', 'aside', 'button']):
+                            tag.decompose()
+                        html_content = str(body_div)
+                        html_content = format_dita_html_for_agiloft(html_content)
+                        logger.info(f"Extracted and formatted DITA HTML length: {len(html_content)} chars")
+                        return html_content
+                
+                logger.warning(f"Failed to fetch HTML for {clause_number}: HTTP {response.status_code}")
+                return None
             
     except Exception as e:
         logger.error(f"Error fetching DITA HTML from acquisition.gov: {e}")
@@ -2726,8 +2769,8 @@ async def export_clauses_json(contract_id: str, request: Request):
         clause_text = db_clause.get("text", "") if db_clause else ""
         clause_title = db_clause.get("title", clause.get("title", "")) if db_clause else clause.get("title", "")
         
-        # Check if text is missing or is a placeholder
-        is_placeholder = not clause_text or "Full text available at" in clause_text or len(clause_text) < 100
+        # Check if text is missing, a placeholder, or too short to be real clause text
+        is_placeholder = not clause_text or "Full text available at" in clause_text or "Content available at" in clause_text or len(clause_text) < 500
         
         if is_placeholder:
             # Try to fetch from acquisition.gov
@@ -2773,8 +2816,8 @@ async def export_clauses_json(contract_id: str, request: Request):
         clause_text = db_clause.get("text", "") if db_clause else ""
         clause_title = db_clause.get("title", "") if db_clause else ""
         
-        # Check if text is missing or is a placeholder
-        is_placeholder = not clause_text or "Full text available at" in clause_text or len(clause_text) < 100
+        # Check if text is missing, a placeholder, or too short to be real clause text
+        is_placeholder = not clause_text or "Full text available at" in clause_text or "Content available at" in clause_text or len(clause_text) < 500
         
         if is_placeholder:
             # Try to fetch from acquisition.gov

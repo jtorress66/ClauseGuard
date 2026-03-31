@@ -10,7 +10,7 @@ import requests
 import os
 import json
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://clausemanager.preview.emergentagent.com').rstrip('/')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://clause-scan.preview.emergentagent.com').rstrip('/')
 
 # Test session token - created in MongoDB
 SESSION_TOKEN = "test_session_1769526557839"
