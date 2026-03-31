@@ -2723,6 +2723,21 @@ async def export_clauses_json(contract_id: str, request: Request):
         
         db_clause = await db.clauses.find_one({"number": clause["number"]}, {"_id": 0})
         
+        # Get clause text - fetch from acquisition.gov if not in DB
+        clause_text = db_clause.get("text", "") if db_clause else ""
+        clause_title = db_clause.get("title", clause.get("title", "")) if db_clause else clause.get("title", "")
+        
+        if not clause_text:
+            # Try to fetch from acquisition.gov
+            try:
+                acq_data = await fetch_clause_from_acquisition_gov(clause["number"])
+                if acq_data:
+                    clause_text = acq_data.get("text", "")
+                    if not clause_title:
+                        clause_title = acq_data.get("title", "")
+            except Exception as e:
+                logger.warning(f"Could not fetch clause {clause['number']} from acquisition.gov: {e}")
+        
         date_match = re.search(r'\(([A-Z][a-z]{2}\s+\d{4})\)', clause.get("source_line", ""))
         clause_date = date_match.group(1) if date_match else ""
         
@@ -2730,9 +2745,8 @@ async def export_clauses_json(contract_id: str, request: Request):
             "Type": "FAR" if clause["number"].startswith("52.") else "DFARS",
             "Number": clause["number"],
             "Date": clause_date,
-            "Clause_Title": db_clause.get("title", clause.get("title", "")) if db_clause else clause.get("title", ""),
-            "Clause_Text": db_clause.get("text", "") if db_clause else "",
-            "Source_URL": f"https://www.acquisition.gov/#{'FAR' if clause['number'].startswith('52.') else 'DFARS'}_{clause['number']}"
+            "Clause_Title": clause_title,
+            "Clause_Text": clause_text
         })
     
     # Add all OTHER detected clauses (not checkbox sub-clauses)
@@ -2747,13 +2761,27 @@ async def export_clauses_json(contract_id: str, request: Request):
         seen_numbers.add(clause_num)
         db_clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
         
+        # Get clause text - fetch from acquisition.gov if not in DB
+        clause_text = db_clause.get("text", "") if db_clause else ""
+        clause_title = db_clause.get("title", "") if db_clause else ""
+        
+        if not clause_text:
+            # Try to fetch from acquisition.gov
+            try:
+                acq_data = await fetch_clause_from_acquisition_gov(clause_num)
+                if acq_data:
+                    clause_text = acq_data.get("text", "")
+                    if not clause_title:
+                        clause_title = acq_data.get("title", "")
+            except Exception as e:
+                logger.warning(f"Could not fetch clause {clause_num} from acquisition.gov: {e}")
+        
         agiloft_data["clauses"].append({
             "Type": "FAR" if clause_num.startswith("52.") else "DFARS",
             "Number": clause_num,
             "Date": "",
-            "Clause_Title": db_clause.get("title", "") if db_clause else "",
-            "Clause_Text": db_clause.get("text", "") if db_clause else "",
-            "Source_URL": f"https://www.acquisition.gov/#{'FAR' if clause_num.startswith('52.') else 'DFARS'}_{clause_num}"
+            "Clause_Title": clause_title,
+            "Clause_Text": clause_text
         })
     
     agiloft_data["summary"] = {
