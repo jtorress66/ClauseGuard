@@ -2722,18 +2722,27 @@ async def export_clauses_json(contract_id: str, request: Request):
         
         db_clause = await db.clauses.find_one({"number": clause["number"]}, {"_id": 0})
         
-        # Get clause text - fetch from acquisition.gov if not in DB
+        # Get clause text - fetch from acquisition.gov if not in DB or if it's a placeholder
         clause_text = db_clause.get("text", "") if db_clause else ""
         clause_title = db_clause.get("title", clause.get("title", "")) if db_clause else clause.get("title", "")
         
-        if not clause_text:
+        # Check if text is missing or is a placeholder
+        is_placeholder = not clause_text or "Full text available at" in clause_text or len(clause_text) < 100
+        
+        if is_placeholder:
             # Try to fetch from acquisition.gov
             try:
                 acq_data = await fetch_clause_from_acquisition_gov(clause["number"])
-                if acq_data:
+                if acq_data and acq_data.get("text") and len(acq_data.get("text", "")) > 100:
                     clause_text = acq_data.get("text", "")
                     if not clause_title:
                         clause_title = acq_data.get("title", "")
+                    # Update the database with the fetched text
+                    await db.clauses.update_one(
+                        {"number": clause["number"]},
+                        {"$set": {"text": clause_text, "title": clause_title}},
+                        upsert=True
+                    )
             except Exception as e:
                 logger.warning(f"Could not fetch clause {clause['number']} from acquisition.gov: {e}")
         
@@ -2760,18 +2769,27 @@ async def export_clauses_json(contract_id: str, request: Request):
         seen_numbers.add(clause_num)
         db_clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
         
-        # Get clause text - fetch from acquisition.gov if not in DB
+        # Get clause text - fetch from acquisition.gov if not in DB or if it's a placeholder
         clause_text = db_clause.get("text", "") if db_clause else ""
         clause_title = db_clause.get("title", "") if db_clause else ""
         
-        if not clause_text:
+        # Check if text is missing or is a placeholder
+        is_placeholder = not clause_text or "Full text available at" in clause_text or len(clause_text) < 100
+        
+        if is_placeholder:
             # Try to fetch from acquisition.gov
             try:
                 acq_data = await fetch_clause_from_acquisition_gov(clause_num)
-                if acq_data:
+                if acq_data and acq_data.get("text") and len(acq_data.get("text", "")) > 100:
                     clause_text = acq_data.get("text", "")
                     if not clause_title:
                         clause_title = acq_data.get("title", "")
+                    # Update the database with the fetched text
+                    await db.clauses.update_one(
+                        {"number": clause_num},
+                        {"$set": {"text": clause_text, "title": clause_title}},
+                        upsert=True
+                    )
             except Exception as e:
                 logger.warning(f"Could not fetch clause {clause_num} from acquisition.gov: {e}")
         
