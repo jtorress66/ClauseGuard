@@ -2667,23 +2667,90 @@ async def export_clauses_json(contract_id: str, request: Request):
         "clauses": []
     }
     
-    # Process all selected/top-level clauses for Agiloft upload
-    for clause in extraction_result["top_level_clauses"]:
+    # Get the selected sub-clauses for building parent clause text
+    selected_sub_nums = {c["number"] for c in extraction_result["selected_sub_clauses"]}
+    
+    # Build a map of parent clauses to their selected sub-clauses
+    parent_selected_map = {}
+    for parent_num, data in extraction_result.get("parent_clauses_with_selections", {}).items():
+        if data.get("selected_sub_clauses"):
+            parent_selected_map[parent_num] = data["selected_sub_clauses"]
+    
+    # Process all detected clauses for Agiloft upload
+    # But only include: parent clauses with selected sub-clauses listed, AND the selected sub-clauses themselves
+    seen_numbers = set()
+    
+    # First, add parent clauses that have selected sub-clauses
+    for parent_num, selected_subs in parent_selected_map.items():
+        if parent_num in seen_numbers or parent_num == "checkbox_list":
+            continue
+        seen_numbers.add(parent_num)
+        
+        db_clause = await db.clauses.find_one({"number": parent_num}, {"_id": 0})
+        
+        # Build Clause_Text with ONLY the selected sub-clauses
+        selected_text_parts = []
+        for sub in selected_subs:
+            sub_db = await db.clauses.find_one({"number": sub["number"]}, {"_id": 0})
+            sub_title = sub_db.get("title", sub.get("title", "")) if sub_db else sub.get("title", "")
+            selected_text_parts.append(f"{sub['number']} - {sub_title}")
+        
+        clause_text = "The following clauses are selected:\n" + "\n".join(selected_text_parts)
+        
+        agiloft_data["clauses"].append({
+            "Type": "FAR" if parent_num.startswith("52.") else "DFARS",
+            "Number": parent_num,
+            "Date": "",
+            "Clause_Title": db_clause.get("title", "") if db_clause else "",
+            "Clause_Text": clause_text,
+            "Selected_Sub_Clauses": [s["number"] for s in selected_subs],
+            "Source_URL": f"https://www.acquisition.gov/#{'FAR' if parent_num.startswith('52.') else 'DFARS'}_{parent_num}"
+        })
+    
+    # Then add all selected sub-clauses
+    for clause in extraction_result["selected_sub_clauses"]:
+        if clause["number"] in seen_numbers:
+            continue
+        seen_numbers.add(clause["number"])
+        
         db_clause = await db.clauses.find_one({"number": clause["number"]}, {"_id": 0})
         
-        # Extract date from source line if present (e.g., "(Jun 2020)")
         date_match = re.search(r'\(([A-Z][a-z]{2}\s+\d{4})\)', clause.get("source_line", ""))
         clause_date = date_match.group(1) if date_match else ""
         
-        clause_entry = {
+        agiloft_data["clauses"].append({
             "Type": "FAR" if clause["number"].startswith("52.") else "DFARS",
             "Number": clause["number"],
             "Date": clause_date,
             "Clause_Title": db_clause.get("title", clause.get("title", "")) if db_clause else clause.get("title", ""),
             "Clause_Text": db_clause.get("text", "") if db_clause else "",
             "Source_URL": f"https://www.acquisition.gov/#{'FAR' if clause['number'].startswith('52.') else 'DFARS'}_{clause['number']}"
-        }
-        agiloft_data["clauses"].append(clause_entry)
+        })
+    
+    # Finally, add standalone detected clauses that don't have checkbox sub-clauses
+    detected_clauses = contract.get("clauses_found", [])
+    for clause_num in detected_clauses:
+        # Skip if already added, or if it's a sub-clause (selected or unselected)
+        if clause_num in seen_numbers:
+            continue
+        if clause_num in selected_sub_nums:
+            continue
+        # Skip unselected sub-clauses
+        unselected_nums = {c["number"] for c in extraction_result.get("unselected_sub_clauses", [])}
+        if clause_num in unselected_nums:
+            continue
+        
+        seen_numbers.add(clause_num)
+        db_clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
+        
+        agiloft_data["clauses"].append({
+            "Type": "FAR" if clause_num.startswith("52.") else "DFARS",
+            "Number": clause_num,
+            "Date": "",
+            "Clause_Title": db_clause.get("title", "") if db_clause else "",
+            "Clause_Text": db_clause.get("text", "") if db_clause else "",
+            "Source_URL": f"https://www.acquisition.gov/#{'FAR' if clause_num.startswith('52.') else 'DFARS'}_{clause_num}"
+        })
     
     agiloft_data["summary"] = {
         "total_clauses": len(agiloft_data["clauses"]),
