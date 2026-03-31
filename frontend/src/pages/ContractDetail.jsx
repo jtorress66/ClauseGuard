@@ -229,11 +229,9 @@ export default function ContractDetail({ user }) {
     }
 
     try {
-      const response = await fetch(`${API}/export/pdf`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const response = await fetch(`${API}/contracts/${contractId}/export-clauses-pdf`, {
+        method: "GET",
         credentials: "include",
-        body: JSON.stringify({ clauses: contract.clauses_found })
       });
 
       if (response.ok) {

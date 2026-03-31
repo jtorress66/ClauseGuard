@@ -2872,6 +2872,239 @@ async def export_clauses_json(contract_id: str, request: Request):
     )
 
 
+@contracts_router.get("/{contract_id}/export-clauses-pdf")
+async def export_clauses_pdf(contract_id: str, request: Request):
+    """
+    Export extracted clauses as PDF, matching the same filtering as the JSON export.
+    Only includes selected sub-clauses and standalone clauses — not unselected checkbox items.
+    Each clause gets full text fetched from acquisition.gov.
+    """
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT, TA_JUSTIFY, TA_CENTER
+    
+    user = await require_auth(request)
+    
+    contract = await db.contracts.find_one(
+        {"contract_id": contract_id, "user_id": user.user_id}
+    )
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    
+    text_content = contract.get("content", "")
+    if not text_content:
+        raise HTTPException(status_code=400, detail="Contract has no content to analyze")
+    
+    # ---- Use the exact same clause filtering logic as export_clauses_json ----
+    extraction_result = _extract_clauses_with_checkboxes(text_content)
+    
+    detected_clauses_set = set(contract.get("clauses_found", []))
+    extracted_numbers = {c["number"] for c in extraction_result["top_level_clauses"]}
+    
+    for clause_num in detected_clauses_set:
+        if clause_num not in extracted_numbers:
+            extraction_result["top_level_clauses"].append({
+                "number": clause_num, "title": "", "is_selected": True, "source_line": ""
+            })
+    
+    def _extract_date_from_clause_text(text: str) -> str:
+        if not text:
+            return ""
+        search_text = text[:600]
+        month_pattern = r'(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)'
+        date_match = re.search(rf'\(\s*({month_pattern})\s+(\d{{4}})\s*\)', search_text)
+        return f"{date_match.group(1)} {date_match.group(2)}" if date_match else ""
+
+    selected_sub_nums = {c["number"] for c in extraction_result["selected_sub_clauses"]}
+    unselected_sub_nums = {c["number"] for c in extraction_result.get("unselected_sub_clauses", [])}
+    
+    parent_selected_map = {}
+    for parent_num, data in extraction_result.get("parent_clauses_with_selections", {}).items():
+        if data.get("selected_sub_clauses"):
+            parent_selected_map[parent_num] = data["selected_sub_clauses"]
+    
+    # Build the filtered clause list (same logic as JSON export)
+    filtered_clauses = []  # list of dicts with Number, Title, Date, Text, Type
+    seen_numbers = set()
+    detected_clauses = contract.get("clauses_found", [])
+    
+    # 1. Parent clauses with selected sub-clauses
+    if "checkbox_list" in parent_selected_map:
+        selected_subs = parent_selected_map["checkbox_list"]
+        parent_clause_patterns = ['52.212-5', '52.212-4', '52.244-6', '252.212-7001', '252.212-7000']
+        for potential_parent in parent_clause_patterns:
+            if potential_parent in detected_clauses and potential_parent not in selected_sub_nums:
+                seen_numbers.add(potential_parent)
+                db_clause = await db.clauses.find_one({"number": potential_parent}, {"_id": 0})
+                selected_text_parts = []
+                for sub in selected_subs:
+                    sub_db = await db.clauses.find_one({"number": sub["number"]}, {"_id": 0})
+                    sub_title = sub_db.get("title", sub.get("title", "")) if sub_db else sub.get("title", "")
+                    date_match = re.search(r'\(([A-Z][a-z]{2}\s+\d{4})\)', sub.get("source_line", ""))
+                    sub_date = f" ({date_match.group(1)})" if date_match else ""
+                    selected_text_parts.append(f"- {sub['number']}, {sub_title}{sub_date}")
+                clause_text = "The Contracting Officer has selected the following clauses:\n\n" + "\n".join(selected_text_parts)
+                filtered_clauses.append({
+                    "Number": potential_parent,
+                    "Type": "FAR" if potential_parent.startswith("52.") else "DFARS",
+                    "Clause_Title": db_clause.get("title", "") if db_clause else "",
+                    "Date": _extract_date_from_clause_text(db_clause.get("text", "")) if db_clause else "",
+                    "Clause_Text": clause_text,
+                })
+                break
+    
+    # 2. Selected sub-clauses
+    for clause in extraction_result["selected_sub_clauses"]:
+        if clause["number"] in seen_numbers:
+            continue
+        seen_numbers.add(clause["number"])
+        db_clause = await db.clauses.find_one({"number": clause["number"]}, {"_id": 0})
+        clause_text = db_clause.get("text", "") if db_clause else ""
+        clause_title = db_clause.get("title", clause.get("title", "")) if db_clause else clause.get("title", "")
+        if not clause_text or "Full text available at" in clause_text or "Content available at" in clause_text or len(clause_text) < 500:
+            try:
+                acq_data = await fetch_clause_from_acquisition_gov(clause["number"])
+                if acq_data and acq_data.get("text") and len(acq_data["text"]) > 100:
+                    clause_text = acq_data["text"]
+                    if not clause_title:
+                        clause_title = acq_data.get("title", "")
+                    await db.clauses.update_one({"number": clause["number"]}, {"$set": {"text": clause_text, "title": clause_title}}, upsert=True)
+            except Exception as e:
+                logger.warning(f"PDF export: Could not fetch clause {clause['number']}: {e}")
+        date_match = re.search(r'\(([A-Z][a-z]{2}\s+\d{4})\)', clause.get("source_line", ""))
+        clause_date = date_match.group(1) if date_match else _extract_date_from_clause_text(clause_text)
+        filtered_clauses.append({
+            "Number": clause["number"],
+            "Type": "FAR" if clause["number"].startswith("52.") else "DFARS",
+            "Clause_Title": clause_title,
+            "Date": clause_date,
+            "Clause_Text": clause_text,
+        })
+    
+    # 3. Other detected clauses (standalone, not unselected)
+    for clause_num in detected_clauses:
+        if clause_num in seen_numbers or clause_num in unselected_sub_nums:
+            continue
+        seen_numbers.add(clause_num)
+        db_clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
+        clause_text = db_clause.get("text", "") if db_clause else ""
+        clause_title = db_clause.get("title", "") if db_clause else ""
+        if not clause_text or "Full text available at" in clause_text or "Content available at" in clause_text or len(clause_text) < 500:
+            try:
+                acq_data = await fetch_clause_from_acquisition_gov(clause_num)
+                if acq_data and acq_data.get("text") and len(acq_data["text"]) > 100:
+                    clause_text = acq_data["text"]
+                    if not clause_title:
+                        clause_title = acq_data.get("title", "")
+                    await db.clauses.update_one({"number": clause_num}, {"$set": {"text": clause_text, "title": clause_title}}, upsert=True)
+            except Exception as e:
+                logger.warning(f"PDF export: Could not fetch clause {clause_num}: {e}")
+        filtered_clauses.append({
+            "Number": clause_num,
+            "Type": "FAR" if clause_num.startswith("52.") else "DFARS",
+            "Clause_Title": clause_title,
+            "Date": _extract_date_from_clause_text(clause_text),
+            "Clause_Text": clause_text,
+        })
+    
+    # ---- Generate PDF ----
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle('ClauseTitle', parent=styles['Heading2'], alignment=TA_CENTER, spaceBefore=15, spaceAfter=5)
+    date_style = ParagraphStyle('ClauseDate', parent=styles['Normal'], alignment=TA_CENTER, spaceBefore=2, spaceAfter=10, fontSize=10, textColor='gray')
+    body_style = ParagraphStyle('ClauseBody', parent=styles['Normal'], alignment=TA_JUSTIFY, spaceBefore=3, spaceAfter=3, fontSize=10)
+    meta_style = ParagraphStyle('ClauseMeta', parent=styles['Normal'], fontSize=9, textColor='gray', spaceBefore=2, spaceAfter=2)
+    
+    indent_styles = {}
+    for level in range(5):
+        indent_styles[level] = ParagraphStyle(
+            f'Indent{level}', parent=styles['Normal'],
+            leftIndent=level * 25 + (15 if level > 0 else 0),
+            firstLineIndent=-15 if level > 0 else 0,
+            spaceBefore=3, spaceAfter=3, alignment=TA_JUSTIFY, fontSize=10
+        )
+    centered_style = ParagraphStyle('EndOfClause', parent=styles['Normal'], alignment=TA_CENTER, spaceBefore=15, spaceAfter=15, fontStyle='italic')
+    
+    story = []
+    story.append(Paragraph("Contract Clause Export", styles['Title']))
+    story.append(Spacer(1, 0.3 * inch))
+    story.append(Paragraph(f"Contract: {contract.get('filename', 'N/A')}", styles['Normal']))
+    story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal']))
+    story.append(Paragraph(f"Total Clauses: {len(filtered_clauses)} (FAR: {sum(1 for c in filtered_clauses if c['Type']=='FAR')}, DFARS: {sum(1 for c in filtered_clauses if c['Type']=='DFARS')})", styles['Normal']))
+    story.append(Spacer(1, 0.5 * inch))
+    
+    for clause in filtered_clauses:
+        safe_title = (clause.get("Clause_Title") or "").replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        safe_number = clause.get("Number", "")
+        clause_date = clause.get("Date", "")
+        
+        story.append(Paragraph(f"{safe_number}: {safe_title}", title_style))
+        type_label = clause.get("Type", "")
+        if clause_date:
+            story.append(Paragraph(f"{type_label} - {clause_date}", date_style))
+        else:
+            story.append(Paragraph(f"{type_label}", date_style))
+        story.append(Spacer(1, 0.1 * inch))
+        
+        clause_text = clause.get("Clause_Text", "")
+        if clause_text:
+            # For parent clauses with selected sub-clause summaries, render plain text
+            # (don't re-fetch HTML which would include all unselected items)
+            is_summary_clause = "The Contracting Officer has selected the following clauses" in clause_text
+            
+            rendered_html = False
+            if not is_summary_clause:
+                # Try to render via HTML parsing for proper indentation
+                try:
+                    html_content = await fetch_clause_html_from_acquisition_gov(safe_number)
+                    if html_content:
+                        text_paragraphs = _extract_pdf_paragraphs_from_dita(html_content)
+                        for para_data in text_paragraphs:
+                            para_text = para_data[0]
+                            level = para_data[1]
+                            is_centered = para_data[2] if len(para_data) > 2 else False
+                            if para_text.strip():
+                                safe_text = para_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                                if is_centered:
+                                    story.append(Paragraph(safe_text, centered_style))
+                                else:
+                                    style = indent_styles.get(min(level, 4), indent_styles[0])
+                                    story.append(Paragraph(safe_text, style))
+                        rendered_html = True
+                except Exception:
+                    pass
+            
+            if not rendered_html:
+                # Render plain text line by line (used for summary clauses and fallback)
+                for line in clause_text.split('\n'):
+                    line = line.rstrip()
+                    if not line.strip():
+                        story.append(Spacer(1, 0.1 * inch))
+                        continue
+                    safe_line = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                    leading_spaces = len(line) - len(line.lstrip())
+                    indent_level = min(leading_spaces // 4, 4)
+                    style = indent_styles.get(indent_level, indent_styles[0])
+                    story.append(Paragraph(safe_line, style))
+        else:
+            story.append(Paragraph("<i>Full text not available.</i>", styles['Normal']))
+        
+        story.append(Spacer(1, 0.4 * inch))
+    
+    doc.build(story)
+    buffer.seek(0)
+    
+    filename = f"clause_export_{contract.get('filename', 'contract').replace('.pdf', '')}_{datetime.now().strftime('%Y%m%d')}.pdf"
+    
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+
 @contracts_router.post("/{contract_id}/analyze")
 async def analyze_contract(contract_id: str, request: Request):
     """AI-powered contract analysis against FAR/DFARS requirements"""

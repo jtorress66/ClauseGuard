@@ -36,9 +36,10 @@ Build a Federal Clause Management app that helps government contractors manage F
   - Unselected clauses are tracked but NOT included in the upload list
   - Prose references (like "see FAR 52.xxx") are filtered out
   - Exports structured JSON file with clause numbers, titles, types (no Source_URL field)
-  - **DFARS clause text fetching** - FIXED (2025-03-31): Fetches DFARS (252.x) clauses from the combined Part 252 page using anchor IDs (`#DFARS_{clause_number}`), with in-memory caching to avoid re-downloading the large page
-  - **Placeholder detection** - Uses 500-char threshold to identify stale summaries and re-fetch full text from acquisition.gov
-  - Endpoints: `/api/contracts/{id}/extract-for-agiloft` and `/api/contracts/{id}/export-clauses-json`
+  - **DFARS clause text fetching** - Fetches DFARS (252.x) clauses from the combined Part 252 page using anchor IDs, with caching
+  - **Date extraction** - Extracts effective dates from clause body text (e.g., "(JAN 2025)")
+  - **PDF export** - Mirrors JSON export filtering: only selected sub-clauses and standalone clauses, with full text from acquisition.gov
+  - Endpoints: `/api/contracts/{id}/extract-for-agiloft`, `/api/contracts/{id}/export-clauses-json`, `/api/contracts/{id}/export-clauses-pdf`
 
 ### Flowdown Analysis
 - [x] Contract type and value-based filtering
