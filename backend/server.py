@@ -2534,6 +2534,26 @@ async def extract_clauses_for_agiloft(contract_id: str, request: Request):
     # Extract clauses with checkbox detection
     extraction_result = _extract_clauses_with_checkboxes(text_content)
     
+    # Also add clauses from the contract's detected list that might not be in checkbox format
+    # These are standalone clause headers like "52.212-5 Contract Terms..."
+    detected_clauses = set(contract.get("clauses_found", []))
+    extracted_numbers = {c["number"] for c in extraction_result["all_clauses"]}
+    
+    # Add standalone detected clauses to the results
+    for clause_num in detected_clauses:
+        if clause_num not in extracted_numbers:
+            # This clause was detected by _detect_clause_headers but not the checkbox extraction
+            # It's likely a standalone clause header (like 52.212-5 in a table)
+            clause_data = {
+                "number": clause_num,
+                "title": "",
+                "is_selected": True,  # It's in the contract
+                "is_checkbox_clause": False,
+                "source_line": f"Detected as standalone clause: {clause_num}"
+            }
+            extraction_result["all_clauses"].append(clause_data)
+            extraction_result["top_level_clauses"].append(clause_data)
+    
     # Enrich with clause details from our database
     for clause_list in [extraction_result["all_clauses"], 
                         extraction_result["top_level_clauses"],
