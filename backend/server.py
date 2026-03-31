@@ -2627,6 +2627,20 @@ async def export_clauses_json(contract_id: str, request: Request):
     # Extract clauses
     extraction_result = _extract_clauses_with_checkboxes(text_content)
     
+    # Also add clauses from the contract's detected list (standalone headers like 52.212-5)
+    detected_clauses = set(contract.get("clauses_found", []))
+    extracted_numbers = {c["number"] for c in extraction_result["top_level_clauses"]}
+    
+    for clause_num in detected_clauses:
+        if clause_num not in extracted_numbers:
+            clause_data = {
+                "number": clause_num,
+                "title": "",
+                "is_selected": True,
+                "source_line": ""
+            }
+            extraction_result["top_level_clauses"].append(clause_data)
+    
     # Build Agiloft KB-compatible JSON
     agiloft_data = {
         "contract_reference": contract.get("filename", ""),
