@@ -2703,6 +2703,20 @@ async def export_clauses_json(contract_id: str, request: Request):
             }
             extraction_result["top_level_clauses"].append(clause_data)
     
+    def _extract_date_from_clause_text(text: str) -> str:
+        """Extract the effective date from clause text (e.g., 'JAN 2025' from the centered title line)."""
+        if not text:
+            return ""
+        # Search within the first 600 chars where the title line with date typically appears
+        search_text = text[:600]
+        # Match patterns like (JAN 2025), (Jan 2025), ( MAY 2024), (  NOV 2023  )
+        # Allow flexible whitespace inside parentheses and between month and year
+        month_pattern = r'(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|JANUARY|FEBRUARY|MARCH|APRIL|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER)'
+        date_match = re.search(rf'\(\s*({month_pattern})\s+(\d{{4}})\s*\)', search_text)
+        if date_match:
+            return f"{date_match.group(1)} {date_match.group(2)}"
+        return ""
+
     # Build Agiloft KB-compatible JSON
     agiloft_data = {
         "contract_reference": contract.get("filename", ""),
@@ -2750,7 +2764,7 @@ async def export_clauses_json(contract_id: str, request: Request):
                 agiloft_data["clauses"].append({
                     "Type": "FAR" if potential_parent.startswith("52.") else "DFARS",
                     "Number": potential_parent,
-                    "Date": "",
+                    "Date": _extract_date_from_clause_text(db_clause.get("text", "")) if db_clause else "",
                     "Clause_Title": db_clause.get("title", "") if db_clause else "",
                     "Clause_Text": clause_text,
                     "Selected_Sub_Clauses": [s["number"] for s in selected_subs]
@@ -2790,7 +2804,7 @@ async def export_clauses_json(contract_id: str, request: Request):
                 logger.warning(f"Could not fetch clause {clause['number']} from acquisition.gov: {e}")
         
         date_match = re.search(r'\(([A-Z][a-z]{2}\s+\d{4})\)', clause.get("source_line", ""))
-        clause_date = date_match.group(1) if date_match else ""
+        clause_date = date_match.group(1) if date_match else _extract_date_from_clause_text(clause_text)
         
         agiloft_data["clauses"].append({
             "Type": "FAR" if clause["number"].startswith("52.") else "DFARS",
@@ -2839,7 +2853,7 @@ async def export_clauses_json(contract_id: str, request: Request):
         agiloft_data["clauses"].append({
             "Type": "FAR" if clause_num.startswith("52.") else "DFARS",
             "Number": clause_num,
-            "Date": "",
+            "Date": _extract_date_from_clause_text(clause_text),
             "Clause_Title": clause_title,
             "Clause_Text": clause_text
         })
