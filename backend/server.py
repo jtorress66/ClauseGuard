@@ -2565,28 +2565,47 @@ async def extract_clauses_for_agiloft(contract_id: str, request: Request):
                 clause_data["type"] = db_clause.get("type", "")
                 clause_data["url"] = db_clause.get("url", "")
     
-    # Build Agiloft-ready data: ALL top-level clauses + selected sub-clauses
+    # Build Agiloft-ready data: Combine top-level and selected sub-clauses (deduplicated)
+    seen_numbers = set()
     agiloft_clauses = []
     
     # Add all top-level clauses
     for c in extraction_result["top_level_clauses"]:
-        agiloft_clauses.append({
-            "clause_number": c["number"],
-            "clause_title": c.get("db_title") or c.get("title", ""),
-            "clause_type": c.get("type", "FAR" if c["number"].startswith("52.") else "DFARS"),
-            "category": "top_level",
-            "is_selected": True  # Top-level clauses are always "selected" (they're in the contract)
-        })
+        if c["number"] not in seen_numbers:
+            seen_numbers.add(c["number"])
+            agiloft_clauses.append({
+                "clause_number": c["number"],
+                "clause_title": c.get("db_title") or c.get("title", ""),
+                "clause_type": c.get("type", "FAR" if c["number"].startswith("52.") else "DFARS"),
+                "category": "top_level",
+                "is_selected": True
+            })
     
-    # Add selected sub-clauses
+    # Add selected sub-clauses that aren't already in top-level
     for c in extraction_result["selected_sub_clauses"]:
-        agiloft_clauses.append({
-            "clause_number": c["number"],
-            "clause_title": c.get("db_title") or c.get("title", ""),
-            "clause_type": c.get("type", "FAR" if c["number"].startswith("52.") else "DFARS"),
-            "category": "selected_sub_clause",
-            "is_selected": True
-        })
+        if c["number"] not in seen_numbers:
+            seen_numbers.add(c["number"])
+            agiloft_clauses.append({
+                "clause_number": c["number"],
+                "clause_title": c.get("db_title") or c.get("title", ""),
+                "clause_type": c.get("type", "FAR" if c["number"].startswith("52.") else "DFARS"),
+                "category": "selected_sub_clause",
+                "is_selected": True
+            })
+    
+    # Add any remaining detected clauses from clauses_found
+    detected_clauses = contract.get("clauses_found", [])
+    for clause_num in detected_clauses:
+        if clause_num not in seen_numbers:
+            seen_numbers.add(clause_num)
+            db_clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
+            agiloft_clauses.append({
+                "clause_number": clause_num,
+                "clause_title": db_clause.get("title", "") if db_clause else "",
+                "clause_type": "FAR" if clause_num.startswith("52.") else "DFARS",
+                "category": "detected",
+                "is_selected": True
+            })
     
     return {
         "contract_id": contract_id,
