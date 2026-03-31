@@ -2021,11 +2021,44 @@ async def upload_contract(request: Request, file: UploadFile = File(...)):
     if file.filename.endswith('.pdf'):
         try:
             import pdfplumber
+            
+            # CID to character mapping for common fonts
+            # CID codes are font-specific, but for number/period, common patterns exist
+            def decode_cid_text(text: str) -> str:
+                """Decode CID-encoded text commonly found in OCR'd PDFs."""
+                import re
+                
+                # Common CID mappings for digits and punctuation
+                cid_map = {
+                    # Numbers (many fonts use these codes)
+                    '(cid:15)': '5', '(cid:12)': '2', '(cid:8)': '.', 
+                    '(cid:11)': '1', '(cid:7)': '-', '(cid:14)': '4',
+                    '(cid:13)': '3', '(cid:16)': '6', '(cid:17)': '7',
+                    '(cid:18)': '8', '(cid:19)': '9', '(cid:10)': '0',
+                    # Try alternative number mappings
+                    '(cid:20)': '0', '(cid:21)': '1', '(cid:22)': '2',
+                    '(cid:23)': '3', '(cid:24)': '4', '(cid:25)': '5',
+                    '(cid:26)': '6', '(cid:27)': '7', '(cid:28)': '8',
+                    '(cid:29)': '9',
+                }
+                
+                # Replace known CID codes
+                for cid, char in cid_map.items():
+                    text = text.replace(cid, char)
+                
+                # Remove remaining (cid:XX) patterns that we couldn't decode
+                text = re.sub(r'\(cid:\d+\)', '', text)
+                
+                return text
+            
             with pdfplumber.open(io.BytesIO(content)) as pdf:
                 all_text = []
                 for page in pdf.pages:
                     # Extract regular text
                     page_text = page.extract_text() or ""
+                    
+                    # Decode CID-encoded text
+                    page_text = decode_cid_text(page_text)
                     all_text.append(page_text)
                     
                     # Also extract tables (important for clause lists)
@@ -2036,6 +2069,7 @@ async def upload_contract(request: Request, file: UploadFile = File(...)):
                                 if row:
                                     # Join cells with space, filter out None values
                                     row_text = " ".join([str(cell) if cell else "" for cell in row])
+                                    row_text = decode_cid_text(row_text)
                                     if row_text.strip():
                                         all_text.append(row_text)
                 
