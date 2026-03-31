@@ -2356,22 +2356,21 @@ def _extract_clauses_with_checkboxes(text_content: str) -> Dict[str, Any]:
             
             # Check if this is a SELECTED clause (marked with X or XX at the start)
             # Pattern: "XX (1) 52.xxx-xx" or "X (1) 52.xxx-xx"
-            # Use word boundary to avoid matching text like "TAX" or "BOX"
             is_selected = bool(re.search(
-                rf'(?:^|\s)X{1,2}\s+(?:\(\d+\)\s*(?:\([ivx]+\)\s*)?)?{re.escape(clause_num)}',
+                rf'^XX?\s+(?:\(\d+\)\s*(?:\([ivx]+\)\s*)?)?{re.escape(clause_num)}',
                 line_stripped
             ))
             
             # Also check for checkmark patterns
             if not is_selected:
                 is_selected = bool(re.search(
-                    rf'(?:^|\s)(?:✓|✔)\s*(?:\(\d+\)\s*)?{re.escape(clause_num)}',
+                    rf'^(?:✓|✔)\s*(?:\(\d+\)\s*)?{re.escape(clause_num)}',
                     line_stripped
                 ))
             
             # Check if this is an UNSELECTED checkbox clause (marked with ___ or [ ])
             is_checkbox_unselected = bool(re.search(
-                rf'(?:^|\s)(?:___?|____)\s*(?:\(\d+\)\s*(?:\([ivx]+\)\s*)?)?{re.escape(clause_num)}',
+                rf'^(?:_{{2,4}})\s*(?:\(\d+\)\s*(?:\([ivx]+\)\s*)?)?{re.escape(clause_num)}',
                 line_stripped
             ))
             
