@@ -2667,7 +2667,7 @@ async def export_clauses_json(contract_id: str, request: Request):
         "clauses": []
     }
     
-    # Get the selected sub-clauses for building parent clause text
+    # Get the selected and unselected sub-clauses
     selected_sub_nums = {c["number"] for c in extraction_result["selected_sub_clauses"]}
     unselected_sub_nums = {c["number"] for c in extraction_result.get("unselected_sub_clauses", [])}
     
@@ -2677,26 +2677,19 @@ async def export_clauses_json(contract_id: str, request: Request):
         if data.get("selected_sub_clauses"):
             parent_selected_map[parent_num] = data["selected_sub_clauses"]
     
-    # Process all detected clauses for Agiloft upload
-    # Only include: 
-    # 1. Parent clauses (like 52.212-5) that have checkbox sub-clauses - with list of selected ones
-    # 2. Standalone clauses that aren't checkbox sub-clauses
     seen_numbers = set()
     detected_clauses = contract.get("clauses_found", [])
     
-    # First, identify potential parent clauses from detected clauses
-    # A parent clause is one that has checkbox sub-clauses under it
-    # If we have a "checkbox_list" parent, we need to find the real parent from detected_clauses
+    # First, add parent clauses (like 52.212-5) with their selected sub-clauses in Clause_Text
+    # If we have a "checkbox_list" parent, find the real parent from detected_clauses
     if "checkbox_list" in parent_selected_map:
         selected_subs = parent_selected_map["checkbox_list"]
         
         # Look for parent clauses like 52.212-5 in detected_clauses
-        # These are clauses that typically contain checkbox selections
-        parent_clause_patterns = ['52.212-5', '52.212-4', '52.244-6', '252.212-7001']
+        parent_clause_patterns = ['52.212-5', '52.212-4', '52.244-6', '252.212-7001', '252.212-7000']
         
         for potential_parent in parent_clause_patterns:
             if potential_parent in detected_clauses and potential_parent not in selected_sub_nums:
-                # This is the parent clause
                 seen_numbers.add(potential_parent)
                 db_clause = await db.clauses.find_one({"number": potential_parent}, {"_id": 0})
                 
@@ -2705,7 +2698,6 @@ async def export_clauses_json(contract_id: str, request: Request):
                 for sub in selected_subs:
                     sub_db = await db.clauses.find_one({"number": sub["number"]}, {"_id": 0})
                     sub_title = sub_db.get("title", sub.get("title", "")) if sub_db else sub.get("title", "")
-                    # Extract date from source line
                     date_match = re.search(r'\(([A-Z][a-z]{2}\s+\d{4})\)', sub.get("source_line", ""))
                     sub_date = f" ({date_match.group(1)})" if date_match else ""
                     selected_text_parts.append(f"- {sub['number']}, {sub_title}{sub_date}")
@@ -2721,44 +2713,35 @@ async def export_clauses_json(contract_id: str, request: Request):
                     "Selected_Sub_Clauses": [s["number"] for s in selected_subs],
                     "Source_URL": f"https://www.acquisition.gov/#{'FAR' if potential_parent.startswith('52.') else 'DFARS'}_{potential_parent}"
                 })
-                break  # Found the parent
+                break
     
-    # Add any other parent clauses with their selections
-    for parent_num, selected_subs in parent_selected_map.items():
-        if parent_num in seen_numbers or parent_num == "checkbox_list":
+    # Add all SELECTED sub-clauses as individual entries
+    for clause in extraction_result["selected_sub_clauses"]:
+        if clause["number"] in seen_numbers:
             continue
-        seen_numbers.add(parent_num)
+        seen_numbers.add(clause["number"])
         
-        db_clause = await db.clauses.find_one({"number": parent_num}, {"_id": 0})
+        db_clause = await db.clauses.find_one({"number": clause["number"]}, {"_id": 0})
         
-        # Build Clause_Text with ONLY the selected sub-clauses
-        selected_text_parts = []
-        for sub in selected_subs:
-            sub_db = await db.clauses.find_one({"number": sub["number"]}, {"_id": 0})
-            sub_title = sub_db.get("title", sub.get("title", "")) if sub_db else sub.get("title", "")
-            date_match = re.search(r'\(([A-Z][a-z]{2}\s+\d{4})\)', sub.get("source_line", ""))
-            sub_date = f" ({date_match.group(1)})" if date_match else ""
-            selected_text_parts.append(f"- {sub['number']}, {sub_title}{sub_date}")
-        
-        clause_text = f"The Contracting Officer has selected the following clauses:\n\n" + "\n".join(selected_text_parts)
+        date_match = re.search(r'\(([A-Z][a-z]{2}\s+\d{4})\)', clause.get("source_line", ""))
+        clause_date = date_match.group(1) if date_match else ""
         
         agiloft_data["clauses"].append({
-            "Type": "FAR" if parent_num.startswith("52.") else "DFARS",
-            "Number": parent_num,
-            "Date": "",
-            "Clause_Title": db_clause.get("title", "") if db_clause else "",
-            "Clause_Text": clause_text,
-            "Selected_Sub_Clauses": [s["number"] for s in selected_subs],
-            "Source_URL": f"https://www.acquisition.gov/#{'FAR' if parent_num.startswith('52.') else 'DFARS'}_{parent_num}"
+            "Type": "FAR" if clause["number"].startswith("52.") else "DFARS",
+            "Number": clause["number"],
+            "Date": clause_date,
+            "Clause_Title": db_clause.get("title", clause.get("title", "")) if db_clause else clause.get("title", ""),
+            "Clause_Text": db_clause.get("text", "") if db_clause else "",
+            "Source_URL": f"https://www.acquisition.gov/#{'FAR' if clause['number'].startswith('52.') else 'DFARS'}_{clause['number']}"
         })
     
-    # Add standalone detected clauses (not checkbox sub-clauses)
+    # Add all OTHER detected clauses (not checkbox sub-clauses)
     for clause_num in detected_clauses:
         # Skip if already added
         if clause_num in seen_numbers:
             continue
-        # Skip if it's a selected or unselected sub-clause
-        if clause_num in selected_sub_nums or clause_num in unselected_sub_nums:
+        # Skip UNSELECTED sub-clauses (the ones marked with ___)
+        if clause_num in unselected_sub_nums:
             continue
         
         seen_numbers.add(clause_num)
