@@ -2710,8 +2710,7 @@ async def export_clauses_json(contract_id: str, request: Request):
                     "Date": "",
                     "Clause_Title": db_clause.get("title", "") if db_clause else "",
                     "Clause_Text": clause_text,
-                    "Selected_Sub_Clauses": [s["number"] for s in selected_subs],
-                    "Source_URL": f"https://www.acquisition.gov/#{'FAR' if potential_parent.startswith('52.') else 'DFARS'}_{potential_parent}"
+                    "Selected_Sub_Clauses": [s["number"] for s in selected_subs]
                 })
                 break
     
