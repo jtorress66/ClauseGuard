@@ -2022,7 +2022,25 @@ async def upload_contract(request: Request, file: UploadFile = File(...)):
         try:
             import pdfplumber
             with pdfplumber.open(io.BytesIO(content)) as pdf:
-                text_content = "\n".join([page.extract_text() or "" for page in pdf.pages])
+                all_text = []
+                for page in pdf.pages:
+                    # Extract regular text
+                    page_text = page.extract_text() or ""
+                    all_text.append(page_text)
+                    
+                    # Also extract tables (important for clause lists)
+                    tables = page.extract_tables()
+                    for table in tables:
+                        if table:
+                            for row in table:
+                                if row:
+                                    # Join cells with space, filter out None values
+                                    row_text = " ".join([str(cell) if cell else "" for cell in row])
+                                    if row_text.strip():
+                                        all_text.append(row_text)
+                
+                text_content = "\n".join(all_text)
+                logger.info(f"PDF extraction: {len(text_content)} chars from {len(pdf.pages)} pages")
         except Exception as e:
             logger.error(f"PDF extraction error: {e}")
             text_content = content.decode('utf-8', errors='ignore')
