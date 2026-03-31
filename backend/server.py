@@ -2531,9 +2531,12 @@ async def export_clauses_json(contract_id: str, request: Request):
     """
     Export extracted clauses as downloadable JSON file for Agiloft KB upload.
     
-    Includes:
-    - All top-level clauses in the contract
-    - All selected sub-clauses (marked with X or XX)
+    Format matches Agiloft KB structure:
+    - Type (FAR/DFARS)
+    - Number (clause number)
+    - Date (effective date)
+    - Clause Title
+    - Clause Text
     """
     from fastapi.responses import JSONResponse
     
@@ -2552,51 +2555,41 @@ async def export_clauses_json(contract_id: str, request: Request):
     # Extract clauses
     extraction_result = _extract_clauses_with_checkboxes(text_content)
     
-    # Build Agiloft-ready JSON
+    # Build Agiloft KB-compatible JSON
     agiloft_data = {
         "contract_reference": contract.get("filename", ""),
         "extraction_date": datetime.now(timezone.utc).isoformat(),
-        "top_level_clauses": [],
-        "selected_sub_clauses": [],
-        "all_clauses_for_upload": []
+        "clauses": []
     }
     
-    # Add top-level clauses
+    # Process all selected/top-level clauses for Agiloft upload
     for clause in extraction_result["top_level_clauses"]:
         db_clause = await db.clauses.find_one({"number": clause["number"]}, {"_id": 0})
+        
+        # Extract date from source line if present (e.g., "(Jun 2020)")
+        date_match = re.search(r'\(([A-Z][a-z]{2}\s+\d{4})\)', clause.get("source_line", ""))
+        clause_date = date_match.group(1) if date_match else ""
+        
         clause_entry = {
-            "number": clause["number"],
-            "title": db_clause.get("title", clause.get("title", "")) if db_clause else clause.get("title", ""),
-            "type": "FAR" if clause["number"].startswith("52.") else "DFARS",
-            "category": "top_level",
-            "acquisition_gov_url": f"https://www.acquisition.gov/#{'FAR' if clause['number'].startswith('52.') else 'DFARS'}_{clause['number']}"
+            "Type": "FAR" if clause["number"].startswith("52.") else "DFARS",
+            "Number": clause["number"],
+            "Date": clause_date,
+            "Clause_Title": db_clause.get("title", clause.get("title", "")) if db_clause else clause.get("title", ""),
+            "Clause_Text": db_clause.get("text", "") if db_clause else "",
+            "Source_URL": f"https://www.acquisition.gov/#{'FAR' if clause['number'].startswith('52.') else 'DFARS'}_{clause['number']}"
         }
-        agiloft_data["top_level_clauses"].append(clause_entry)
-        agiloft_data["all_clauses_for_upload"].append(clause_entry)
-    
-    # Add selected sub-clauses
-    for clause in extraction_result["selected_sub_clauses"]:
-        db_clause = await db.clauses.find_one({"number": clause["number"]}, {"_id": 0})
-        clause_entry = {
-            "number": clause["number"],
-            "title": db_clause.get("title", clause.get("title", "")) if db_clause else clause.get("title", ""),
-            "type": "FAR" if clause["number"].startswith("52.") else "DFARS",
-            "category": "selected_sub_clause",
-            "acquisition_gov_url": f"https://www.acquisition.gov/#{'FAR' if clause['number'].startswith('52.') else 'DFARS'}_{clause['number']}"
-        }
-        agiloft_data["selected_sub_clauses"].append(clause_entry)
-        agiloft_data["all_clauses_for_upload"].append(clause_entry)
+        agiloft_data["clauses"].append(clause_entry)
     
     agiloft_data["summary"] = {
-        "total_top_level_clauses": len(agiloft_data["top_level_clauses"]),
-        "total_selected_sub_clauses": len(agiloft_data["selected_sub_clauses"]),
-        "total_clauses_for_upload": len(agiloft_data["all_clauses_for_upload"])
+        "total_clauses": len(agiloft_data["clauses"]),
+        "far_clauses": len([c for c in agiloft_data["clauses"] if c["Type"] == "FAR"]),
+        "dfars_clauses": len([c for c in agiloft_data["clauses"] if c["Type"] == "DFARS"])
     }
     
     return JSONResponse(
         content=agiloft_data,
         headers={
-            "Content-Disposition": f'attachment; filename="clauses_{contract_id}.json"'
+            "Content-Disposition": f'attachment; filename="agiloft_clauses_{contract_id}.json"'
         }
     )
 
