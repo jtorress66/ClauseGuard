@@ -46,7 +46,8 @@ Build a Federal Clause Management app that helps government contractors manage F
   - Right panel: 3-step wizard (Upload → Verify in Library → Link to Contract)
   - Verify which extracted clauses already exist in Agiloft Clause Library
   - Links clauses by creating records in the "Contract Clauses" junction table (not by modifying the contract directly)
-  - Junction payload: `{"contract_id": <int>, "contract_clause_modification_to_clause": {"id": <int>}}`
+  - SOAP Junction Linking: Uses MAP entry format with `xsi:type` annotations for `DAOcontract_Clause_Modification_To_Contract` and `DAOcontract_Clause_Modification_To_Clause`
+  - Single-step CCM creation: Contract link + Clause link + text all in one `EWCreate_WSContract_Clause_Modification` call
   - Create missing clauses in library with full text from acquisition.gov
   - Endpoints: `/api/agiloft/upload-and-extract`, `/api/agiloft/verify-library-clauses`, `/api/agiloft/link-clauses-to-contract`, `/api/agiloft/create-missing-and-link`
 
@@ -152,6 +153,7 @@ Build a Federal Clause Management app that helps government contractors manage F
 - Level 4: `padding-left: 6.1em` - (A), (B), (C)...
 
 ## Change Log
+- **2026-04-01 (Session 10)**: P0 FIX - Agiloft SOAP linked fields (Contract ID, Clause Title) now populate correctly. Root cause: Wrong XML element names (`DAOcontract_Clause_Modification_To_Clause1` and `DAOcontract_To_Contract_Clause_Modification`) and wrong data format (direct `<id>` instead of MAP entry `<entry><key xsi:type="xs:string">id</key><value xsi:type="xs:long">N</value></entry>`). Fix: Analyzed WSDL and read existing CCM records to determine exact XML structure. Replaced 3-step create-link-update with single-step `EWCreate_WSContract_Clause_Modification` using `DAOcontract_Clause_Modification_To_Contract` (MAP entries) and `DAOcontract_Clause_Modification_To_Clause` (MAP entries). Verified: Contract Title, Clause Title, text all populated on test record.
 - **2026-04-01 (Session 9)**: P0 - Migrated Agiloft clause-to-contract linking from REST API to SOAP API (zeep). REST API structurally rejects writes to swdao3link junction table fields. SOAP implementation uses `EWCreate_WSContract_Clause_Modification` with `DAOcontract_Clause_Modification_To_Contract` and `DAOcontract_Clause_Modification_To_Clause` entry maps. Updated both `link-clauses-to-contract` and `create-missing-and-link` endpoints. All 12 backend tests pass.
 - **2025-04-01 (Session 7)**: Fixed P0 Agiloft junction table payload. Changed field `contract_clause_modification_to_contract: {"id": int}` to `contract_id: int` (plain integer), and locked in `contract_clause_modification_to_clause: {"id": int}` as the clause link field. Removed dynamic field discovery/fallback logic.
 - **2025-03-30 (Session 5 continued)**: 

@@ -5,6 +5,12 @@
 - Password: test123
 - User ID: user_46699fde69bf
 
+## Agiloft KB Credentials
+- Username: jtorres
+- Password: Elitebco2026
+- KB URL: https://elitebcopartnerkb.saas.agiloft.com
+- KB Name: elitebcoPartnerKB
+
 ## Auth Method
 - HTTP-only cookies (session_token)
 - Login: POST /api/auth/login with JSON body {"email": "...", "password": "..."}

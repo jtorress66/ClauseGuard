@@ -3803,12 +3803,12 @@ async def _soap_login(kb_url: str, kb_name: str, username: str, password: str) -
     return session_id
 
 async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_id: int, clause_id: int, clause_text: str = "", clause_type: str = "") -> int:
-    """Create a contract_clause_modification record via SOAP and link it properly.
-    
-    Architecture (from WSDL analysis):
-    - Clause link: set on CCM via DAOcontract_Clause_Modification_To_Clause1 (linking class on CCM)
-    - Contract link: set on Contract via DAOcontract_To_Contract_Clause_Modification (linking class on Contract)
-    - Text fields: set on CCM via EWUpdate_WSContract_Clause_Modification
+    """Create a contract_clause_modification record via SOAP with all links in a single call.
+
+    Uses MAP entry format with xsi:type annotations for linked fields:
+    - DAOcontract_Clause_Modification_To_Contract: links CCM to a Contract (entry map)
+    - DAOcontract_Clause_Modification_To_Clause: links CCM to a Clause Library record (entry map)
+    - Text fields (accepted_Clause_Text, source_Text) are set as direct elements.
     """
     service_url = _build_soap_url(kb_url, kb_name)
     ns = _build_soap_ns(kb_name)
@@ -3826,16 +3826,35 @@ async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_
                 text = text[start:]
         return text
 
-    # Step 1: Create CCM record with Clause Library link
+    from xml.sax.saxutils import escape as xml_escape
+
+    # Build optional text fields
+    text_elements = ""
+    if clause_text:
+        escaped_text = xml_escape(clause_text)
+        text_elements = f"""
+        <accepted_Clause_Text>{escaped_text}</accepted_Clause_Text>
+        <source_Text>{escaped_text}</source_Text>"""
+
+    # Single-step EWCreate with both Contract and Clause links using MAP entry format
     create_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
   <soapenv:Body>
     <ns:EWCreate_WSContract_Clause_Modification>
       <sessionId>{session_id}</sessionId>
       <ewwsBaseUserObjectMap>
-        <DAOcontract_Clause_Modification_To_Clause1>
-          <id>{clause_id}</id>
-        </DAOcontract_Clause_Modification_To_Clause1>
+        <DAOcontract_Clause_Modification_To_Contract>
+          <entry>
+            <key xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xs="http://www.w3.org/2001/XMLSchema" xsi:type="xs:string">id</key>
+            <value xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xs="http://www.w3.org/2001/XMLSchema" xsi:type="xs:long">{contract_id}</value>
+          </entry>
+        </DAOcontract_Clause_Modification_To_Contract>
+        <DAOcontract_Clause_Modification_To_Clause>
+          <entry>
+            <key xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xs="http://www.w3.org/2001/XMLSchema" xsi:type="xs:string">id</key>
+            <value xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xs="http://www.w3.org/2001/XMLSchema" xsi:type="xs:long">{clause_id}</value>
+          </entry>
+        </DAOcontract_Clause_Modification_To_Clause>{text_elements}
       </ewwsBaseUserObjectMap>
     </ns:EWCreate_WSContract_Clause_Modification>
   </soapenv:Body>
@@ -3850,65 +3869,11 @@ async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_
     if not id_match:
         raise Exception(f"No recordIdentifier in response: {resp_text[:300]}")
     new_id = int(id_match.group(1))
-    logger.info(f"SOAP Step 1: Created CCM {new_id} with clause link {clause_id}")
-
-    # Step 2: Update the Contract to link to this new CCM record
-    try:
-        contract_update_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
-  <soapenv:Body>
-    <ns:EWUpdate_WSContract>
-      <sessionId>{session_id}</sessionId>
-      <ewwsBaseUserObjectMap>
-        <id>{contract_id}</id>
-        <operationHints>addLinked</operationHints>
-        <DAOcontract_To_Contract_Clause_Modification>
-          <id>{new_id}</id>
-        </DAOcontract_To_Contract_Clause_Modification>
-      </ewwsBaseUserObjectMap>
-    </ns:EWUpdate_WSContract>
-  </soapenv:Body>
-</soapenv:Envelope>'''
-
-        contract_resp = await _soap_post(contract_update_xml)
-        if 'faultstring' in contract_resp:
-            fault = re.search(r'<faultstring>(.*?)</faultstring>', contract_resp, re.DOTALL)
-            logger.warning(f"SOAP Step 2 fault (contract link): {fault.group(1)[:200] if fault else contract_resp[:200]}")
-        else:
-            logger.info(f"SOAP Step 2: Linked CCM {new_id} to Contract {contract_id}")
-    except Exception as e:
-        logger.warning(f"SOAP Step 2 failed (contract link): {e}")
-
-    # Step 3: Update CCM with clause text
-    if clause_text:
-        try:
-            from xml.sax.saxutils import escape as xml_escape
-            escaped_text = xml_escape(clause_text)
-
-            text_update_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
-  <soapenv:Body>
-    <ns:EWUpdate_WSContract_Clause_Modification>
-      <sessionId>{session_id}</sessionId>
-      <ewwsBaseUserObjectMap>
-        <id>{new_id}</id>
-        <accepted_Clause_Text>{escaped_text}</accepted_Clause_Text>
-        <source_Text>{escaped_text}</source_Text>
-      </ewwsBaseUserObjectMap>
-    </ns:EWUpdate_WSContract_Clause_Modification>
-  </soapenv:Body>
-</soapenv:Envelope>'''
-
-            text_resp = await _soap_post(text_update_xml)
-            if 'faultstring' in text_resp:
-                fault = re.search(r'<faultstring>(.*?)</faultstring>', text_resp, re.DOTALL)
-                logger.warning(f"SOAP Step 3 fault (text): {fault.group(1)[:200] if fault else text_resp[:200]}")
-            else:
-                logger.info(f"SOAP Step 3: Text populated on CCM {new_id} ({len(clause_text)} chars)")
-        except Exception as e:
-            logger.warning(f"SOAP Step 3 failed (text): {e}")
+    logger.info(f"SOAP: Created CCM {new_id} linked to contract={contract_id}, clause={clause_id}, text_len={len(clause_text)}")
 
     return new_id
+
+
 
 async def agiloft_login(client: httpx.AsyncClient, config: AgiloftConfig) -> Dict[str, Any]:
     """
