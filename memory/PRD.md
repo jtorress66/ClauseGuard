@@ -46,7 +46,7 @@ Build a Federal Clause Management app that helps government contractors manage F
   - Right panel: 3-step wizard (Upload → Verify in Library → Link to Contract)
   - Verify which extracted clauses already exist in Agiloft Clause Library
   - Links clauses by creating records in the "Contract Clauses" junction table (not by modifying the contract directly)
-  - Junction payload: `{"Contract ID": {"id": contract_id}, "Clause Library": {"id": clause_library_id}, "Title": title}`
+  - Junction payload: `{"contract_id": <int>, "contract_clause_modification_to_clause": {"id": <int>}}`
   - Create missing clauses in library with full text from acquisition.gov
   - Endpoints: `/api/agiloft/upload-and-extract`, `/api/agiloft/verify-library-clauses`, `/api/agiloft/link-clauses-to-contract`, `/api/agiloft/create-missing-and-link`
 
@@ -152,6 +152,7 @@ Build a Federal Clause Management app that helps government contractors manage F
 - Level 4: `padding-left: 6.1em` - (A), (B), (C)...
 
 ## Change Log
+- **2025-04-01 (Session 7)**: Fixed P0 Agiloft junction table payload. Changed field `contract_clause_modification_to_contract: {"id": int}` to `contract_id: int` (plain integer), and locked in `contract_clause_modification_to_clause: {"id": int}` as the clause link field. Removed dynamic field discovery/fallback logic.
 - **2025-03-30 (Session 5 continued)**: 
   - Fixed P0 bug - "Generate Checklist" feature failing with ObjectId serialization error. Root cause: MongoDB `insert_one()` mutates dict adding `_id` (ObjectId). Fix: Added `checklist_dict.pop("_id", None)` before return.
   - Fixed P0 bug - Contract Comparison "Key Differences" rendering error. Root cause: AI returns `key_differences` as objects with keys `{topic, contract_1, contract_2, practical_effect}` instead of strings. Fix: Updated `ContractComparison.jsx` to handle both string and object formats.

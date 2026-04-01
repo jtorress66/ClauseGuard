@@ -5577,11 +5577,15 @@ class LinkClausesRequest(BaseModel):
 
 @agiloft_router.post("/link-clauses-to-contract")
 async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Request):
-    """Link clauses to a contract via contract_clause_modification junction table."""
+    """Link clauses to a contract via contract_clause_modification junction table.
+    
+    Correct payload format (confirmed by user):
+      contract_id: plain integer (e.g. 690)
+      contract_clause_modification_to_clause: link object {"id": <int>}
+    """
     user = await require_auth(request)
     config = link_request.config
     TABLE = "contract_clause_modification"
-    CONTRACT_FIELD = "contract_clause_modification_to_contract"
 
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
@@ -5591,99 +5595,32 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                 raise HTTPException(status_code=401, detail="Authentication failed")
 
             headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
-            contract_id = int(link_request.contract_id)
+            contract_id_int = int(link_request.contract_id)
             create_url = _build_agiloft_url(config.kb_url, config.kb_name, TABLE)
 
-            # Discover fields from a sample record
-            all_fields = []
-            try:
-                search_url = _build_agiloft_url(config.kb_url, config.kb_name, f"{TABLE}/search")
-                sresp = await client.post(search_url, params={"lang": "en"},
-                    json={"search": "", "numberOfRows": 1}, headers=headers)
-                if sresp.status_code == 200:
-                    sdata = sresp.json().get("result", [])
-                    if isinstance(sdata, list) and sdata:
-                        all_fields = list(sdata[0].keys())
-                        logger.info(f"Fields in {TABLE}: {all_fields}")
-            except Exception as e:
-                logger.warning(f"Discovery error: {e}")
-
-            # Find the clause library linked field
-            clause_field = None
-            for f in all_fields:
-                if f.startswith("contract_clause_modification_to") or f.startswith("contract_clause_modification_go"):
-                    suffix = f.split("_to_")[-1] if "_to_" in f else f.split("_go_")[-1]
-                    if "contract" not in suffix and "type" not in suffix:
-                        clause_field = f
-                        break
-
-            logger.info(f"Contract field: {CONTRACT_FIELD}, Clause lib field: {clause_field}")
-
-            # Build and test the first payload
             linked = []
             failed = []
-            working_clause_field = clause_field
 
-            # Candidates to try if first attempt fails
-            clause_candidates = list(dict.fromkeys(filter(None, [
-                clause_field,
-                "contract_clause_modification_to_clause_library",
-                "contract_clause_modification_go_clause_library",
-                "contract_clause_modification_to_clause",
-                "contract_clause_modification_go_clause",
-                "clause_library", "clause",
-            ])))
+            for i, clause_id in enumerate(link_request.clause_ids):
+                clause_num = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{clause_id}"
 
-            first_clause_id = int(link_request.clause_ids[0]) if link_request.clause_ids else None
-            first_clause_num = link_request.clause_numbers[0] if link_request.clause_numbers else None
+                payload = {
+                    "contract_id": contract_id_int,
+                    "contract_clause_modification_to_clause": {"id": int(clause_id)}
+                }
 
-            if first_clause_id is not None:
-                # Try primary payload
-                payload = {CONTRACT_FIELD: {"id": contract_id}}
-                if clause_field:
-                    payload[clause_field] = {"id": first_clause_id}
-                logger.info(f"Primary payload: {payload}")
+                logger.info(f"Linking clause {clause_num} (lib id={clause_id}) to contract {contract_id_int}: {payload}")
 
                 resp = await client.post(create_url, params={"lang": "en"}, json=payload, headers=headers)
-                logger.info(f"Primary resp: {resp.status_code} {resp.text[:500]}")
+                logger.info(f"Link response for {clause_num}: {resp.status_code} {resp.text[:500]}")
 
                 if resp.status_code in [200, 201]:
                     rd = resp.json() if resp.text else {}
-                    nid = rd.get("result", rd).get("id") if isinstance(rd.get("result", rd), dict) else None
-                    linked.append({"number": first_clause_num, "clause_library_id": first_clause_id, "contract_clause_id": nid})
+                    result = rd.get("result", rd)
+                    nid = result.get("id") if isinstance(result, dict) else None
+                    linked.append({"number": clause_num, "clause_library_id": int(clause_id), "contract_clause_id": nid})
                 else:
-                    # Try alternative clause field names
-                    found_working = False
-                    for cf in clause_candidates:
-                        alt = {CONTRACT_FIELD: {"id": contract_id}, cf: {"id": first_clause_id}}
-                        logger.info(f"Trying alt: {alt}")
-                        ar = await client.post(create_url, params={"lang": "en"}, json=alt, headers=headers)
-                        logger.info(f"Alt {cf}: {ar.status_code} {ar.text[:300]}")
-                        if ar.status_code in [200, 201]:
-                            working_clause_field = cf
-                            rd = ar.json() if ar.text else {}
-                            nid = rd.get("result", rd).get("id") if isinstance(rd.get("result", rd), dict) else None
-                            linked.append({"number": first_clause_num, "clause_library_id": first_clause_id, "contract_clause_id": nid})
-                            found_working = True
-                            break
-                    if not found_working:
-                        failed.append({"number": first_clause_num, "error": resp.text[:500], "available_fields": all_fields})
-
-            # Process remaining clauses
-            for i in range(1, len(link_request.clause_ids)):
-                cid = int(link_request.clause_ids[i])
-                cnum = link_request.clause_numbers[i]
-                payload = {CONTRACT_FIELD: {"id": contract_id}}
-                if working_clause_field:
-                    payload[working_clause_field] = {"id": cid}
-
-                resp = await client.post(create_url, params={"lang": "en"}, json=payload, headers=headers)
-                if resp.status_code in [200, 201]:
-                    rd = resp.json() if resp.text else {}
-                    nid = rd.get("result", rd).get("id") if isinstance(rd.get("result", rd), dict) else None
-                    linked.append({"number": cnum, "clause_library_id": cid, "contract_clause_id": nid})
-                else:
-                    failed.append({"number": cnum, "error": resp.text[:200]})
+                    failed.append({"number": clause_num, "clause_library_id": int(clause_id), "error": resp.text[:500]})
 
             return {
                 "success": len(linked) > 0,
@@ -5692,7 +5629,6 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                 "linked": linked,
                 "failed": failed,
                 "table_used": TABLE,
-                "clause_lib_field": working_clause_field,
                 "message": f"Created {len(linked)} Contract Clause records" if linked else "Failed - check errors",
             }
 
