@@ -5628,12 +5628,10 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
             first_clause_id = int(link_request.clause_ids[0])
             first_detail = clause_details.get(first_clause_id, {})
             first_title = first_detail.get("clause_title", link_request.clause_numbers[0])
-            # Strip HTML from clause text for safe transmission
-            raw_text = first_detail.get("clause_text", "")
-            from html import unescape
+            # Keep HTML for formatting/indentation, only strip <!-- comments --> that break Agiloft parser
             import re
-            plain_text = unescape(re.sub(r'<[^>]+>', ' ', raw_text)).strip()
-            plain_text = re.sub(r'\s+', ' ', plain_text)[:5000]  # Limit size
+            raw_text = first_detail.get("clause_text", "")
+            clean_html = re.sub(r'<!--.*?-->', '', raw_text, flags=re.DOTALL).strip()
 
             # Test individual fields via PUT
             writable_fields = {}
@@ -5641,9 +5639,9 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                 ("clause_title", first_title),
                 ("source", "Added from Library"),
                 ("clause_type", first_detail.get("clause_type", "FAR")),
-                ("accepted_clause_text", plain_text[:2000] if plain_text else ""),
-                ("source_text", plain_text[:2000] if plain_text else ""),
-                ("clause_text", plain_text[:2000] if plain_text else ""),
+                ("accepted_clause_text", clean_html if clean_html else ""),
+                ("source_text", clean_html if clean_html else ""),
+                ("clause_text", clean_html if clean_html else ""),
             ]
 
             for field_name, field_value in test_fields:
@@ -5695,8 +5693,7 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                 # Populate with writable fields
                 if working_fields:
                     raw = detail.get("clause_text", "")
-                    pt = unescape(re.sub(r'<[^>]+>', ' ', raw)).strip()
-                    pt = re.sub(r'\s+', ' ', pt)[:5000]
+                    clean = re.sub(r'<!--.*?-->', '', raw, flags=re.DOTALL).strip()
 
                     update_data = {}
                     for f in working_fields:
@@ -5707,8 +5704,8 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                         elif f == "clause_type":
                             update_data[f] = detail.get("clause_type", "FAR" if cnum.startswith("52.") else "DFARS")
                         elif f in ("accepted_clause_text", "source_text", "clause_text"):
-                            if pt:
-                                update_data[f] = pt[:2000]
+                            if clean:
+                                update_data[f] = clean
 
                     if update_data:
                         await client.put(f"{base_url}/{new_id}", params={"lang": "en"},
