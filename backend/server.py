@@ -3803,12 +3803,30 @@ async def _soap_login(kb_url: str, kb_name: str, username: str, password: str) -
     return session_id
 
 async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_id: int, clause_id: int, clause_text: str = "", clause_type: str = "") -> int:
-    """Create a contract_clause_modification record via raw SOAP XML.
-    Sets linked fields (Contract + Clause), then edits to add text/metadata."""
+    """Create a contract_clause_modification record via SOAP and link it properly.
+    
+    Architecture (from WSDL analysis):
+    - Clause link: set on CCM via DAOcontract_Clause_Modification_To_Clause1 (linking class on CCM)
+    - Contract link: set on Contract via DAOcontract_To_Contract_Clause_Modification (linking class on Contract)
+    - Text fields: set on CCM via EWUpdate_WSContract_Clause_Modification
+    """
     service_url = _build_soap_url(kb_url, kb_name)
     ns = _build_soap_ns(kb_name)
 
-    # Step 1: Create the junction record using linking class fields
+    async def _soap_post(xml_body: str) -> str:
+        async with httpx.AsyncClient(timeout=60.0, verify=True) as c:
+            r = await c.post(service_url, content=xml_body.encode('utf-8'),
+                             headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
+        text = r.text.strip()
+        if '--uuid:' in text:
+            start = text.find('<soap:Envelope')
+            if start == -1:
+                start = text.find('<soap-env:Envelope')
+            if start >= 0:
+                text = text[start:]
+        return text
+
+    # Step 1: Create CCM record with Clause Library link
     create_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
   <soapenv:Body>
@@ -3818,81 +3836,77 @@ async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_
         <DAOcontract_Clause_Modification_To_Clause1>
           <id>{clause_id}</id>
         </DAOcontract_Clause_Modification_To_Clause1>
-        <related3F6D7799267Fe13332B0278Ecddbf9E8>
-          <id>{contract_id}</id>
-        </related3F6D7799267Fe13332B0278Ecddbf9E8>
       </ewwsBaseUserObjectMap>
     </ns:EWCreate_WSContract_Clause_Modification>
   </soapenv:Body>
 </soapenv:Envelope>'''
 
-    async with httpx.AsyncClient(timeout=30.0, verify=True) as client:
-        resp = await client.post(service_url, content=create_xml.encode('utf-8'),
-                                  headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
-
-    resp_text = resp.text.strip()
-    if '--uuid:' in resp_text or resp_text.startswith('--'):
-        xml_start = resp_text.find('<soap:Envelope')
-        if xml_start == -1:
-            xml_start = resp_text.find('<soap-env:Envelope')
-        if xml_start >= 0:
-            resp_text = resp_text[xml_start:]
-
+    resp_text = await _soap_post(create_xml)
     if 'faultstring' in resp_text:
-        fault_match = re.search(r'<faultstring>(.*?)</faultstring>', resp_text, re.DOTALL)
-        raise Exception(fault_match.group(1) if fault_match else resp_text[:300])
+        fault = re.search(r'<faultstring>(.*?)</faultstring>', resp_text, re.DOTALL)
+        raise Exception(fault.group(1) if fault else resp_text[:300])
 
     id_match = re.search(r'<(?:\w+:)?recordIdentifier[^>]*>(\d+)</(?:\w+:)?recordIdentifier>', resp_text)
     if not id_match:
         raise Exception(f"No recordIdentifier in response: {resp_text[:300]}")
-
     new_id = int(id_match.group(1))
+    logger.info(f"SOAP Step 1: Created CCM {new_id} with clause link {clause_id}")
 
-    # Step 2: EWUpdate to populate text, type, and re-assert DAO links
+    # Step 2: Update the Contract to link to this new CCM record
     try:
-        from xml.sax.saxutils import escape as xml_escape
+        contract_update_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
+  <soapenv:Body>
+    <ns:EWUpdate_WSContract>
+      <sessionId>{session_id}</sessionId>
+      <ewwsBaseUserObjectMap>
+        <id>{contract_id}</id>
+        <operationHints>addLinked</operationHints>
+        <DAOcontract_To_Contract_Clause_Modification>
+          <id>{new_id}</id>
+        </DAOcontract_To_Contract_Clause_Modification>
+      </ewwsBaseUserObjectMap>
+    </ns:EWUpdate_WSContract>
+  </soapenv:Body>
+</soapenv:Envelope>'''
 
-        # Build text fields
-        text_xml = ""
-        if clause_text:
+        contract_resp = await _soap_post(contract_update_xml)
+        if 'faultstring' in contract_resp:
+            fault = re.search(r'<faultstring>(.*?)</faultstring>', contract_resp, re.DOTALL)
+            logger.warning(f"SOAP Step 2 fault (contract link): {fault.group(1)[:200] if fault else contract_resp[:200]}")
+        else:
+            logger.info(f"SOAP Step 2: Linked CCM {new_id} to Contract {contract_id}")
+    except Exception as e:
+        logger.warning(f"SOAP Step 2 failed (contract link): {e}")
+
+    # Step 3: Update CCM with clause text
+    if clause_text:
+        try:
+            from xml.sax.saxutils import escape as xml_escape
             escaped_text = xml_escape(clause_text)
-            text_xml = f"""
-        <accepted_Clause_Text>{escaped_text}</accepted_Clause_Text>
-        <source_Text>{escaped_text}</source_Text>"""
 
-        # Build type field - skip for now, 'type' is a subtype field with restricted values
-        type_xml = ""
-
-        update_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+            text_update_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
   <soapenv:Body>
     <ns:EWUpdate_WSContract_Clause_Modification>
       <sessionId>{session_id}</sessionId>
       <ewwsBaseUserObjectMap>
         <id>{new_id}</id>
-        <DAOcontract_Clause_Modification_To_Clause1>
-          <id>{clause_id}</id>
-        </DAOcontract_Clause_Modification_To_Clause1>
-        <related3F6D7799267Fe13332B0278Ecddbf9E8>
-          <id>{contract_id}</id>
-        </related3F6D7799267Fe13332B0278Ecddbf9E8>{text_xml}{type_xml}
+        <accepted_Clause_Text>{escaped_text}</accepted_Clause_Text>
+        <source_Text>{escaped_text}</source_Text>
       </ewwsBaseUserObjectMap>
     </ns:EWUpdate_WSContract_Clause_Modification>
   </soapenv:Body>
 </soapenv:Envelope>'''
 
-        async with httpx.AsyncClient(timeout=30.0, verify=True) as client:
-            edit_resp = await client.post(service_url, content=update_xml.encode('utf-8'),
-                                          headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
-        edit_text = edit_resp.text.strip()
-        logger.info(f"SOAP EWUpdate raw for CCM {new_id} (status={edit_resp.status_code}): {edit_text[:500]}")
-        if 'faultstring' in edit_text:
-            fault = re.search(r'<faultstring>(.*?)</faultstring>', edit_text, re.DOTALL)
-            logger.warning(f"SOAP EWUpdate fault on CCM {new_id}: {fault.group(1)[:200] if fault else edit_text[:200]}")
-        else:
-            logger.info(f"SOAP EWUpdate on CCM {new_id}: all fields populated")
-    except Exception as e:
-        logger.warning(f"SOAP EWUpdate failed for CCM {new_id}: {e}")
+            text_resp = await _soap_post(text_update_xml)
+            if 'faultstring' in text_resp:
+                fault = re.search(r'<faultstring>(.*?)</faultstring>', text_resp, re.DOTALL)
+                logger.warning(f"SOAP Step 3 fault (text): {fault.group(1)[:200] if fault else text_resp[:200]}")
+            else:
+                logger.info(f"SOAP Step 3: Text populated on CCM {new_id} ({len(clause_text)} chars)")
+        except Exception as e:
+            logger.warning(f"SOAP Step 3 failed (text): {e}")
 
     return new_id
 
