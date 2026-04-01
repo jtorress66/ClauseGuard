@@ -3793,8 +3793,8 @@ async def _soap_login(kb_url: str, kb_name: str, username: str, password: str) -
         fault_match = re.search(r'<faultstring>(.*?)</faultstring>', resp_text, re.DOTALL)
         raise Exception(f"SOAP Login Failed: {fault_match.group(1) if fault_match else resp_text[:300]}")
 
-    # Extract sessionId (may have namespace prefix like ns1:sessionId)
-    session_match = re.search(r'<(?:\w+:)?sessionId>(.*?)</(?:\w+:)?sessionId>', resp_text)
+    # Extract sessionId (tag may have xmlns attributes or namespace prefix)
+    session_match = re.search(r'<(?:\w+:)?sessionId[^>]*>(.*?)</(?:\w+:)?sessionId>', resp_text)
     if not session_match:
         raise Exception(f"Could not extract sessionId from SOAP response: {resp_text[:300]}")
 
@@ -3850,8 +3850,8 @@ async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_
         fault_match = re.search(r'<faultstring>(.*?)</faultstring>', resp_text, re.DOTALL)
         raise Exception(fault_match.group(1) if fault_match else resp_text[:300])
 
-    # Extract recordIdentifier (may have namespace prefix)
-    id_match = re.search(r'<(?:\w+:)?recordIdentifier>(\d+)</(?:\w+:)?recordIdentifier>', resp_text)
+    # Extract recordIdentifier (tag may have xmlns attributes or namespace prefix)
+    id_match = re.search(r'<(?:\w+:)?recordIdentifier[^>]*>(\d+)</(?:\w+:)?recordIdentifier>', resp_text)
     if not id_match:
         raise Exception(f"No recordIdentifier in response: {resp_text[:300]}")
 
