@@ -5616,10 +5616,15 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                     debug_log.append(f"CREATE failed for {clause_num}: {create_resp.text[:200]}")
                     continue
 
-                # Extract new record ID
+                # Extract new record ID - Agiloft returns {"result": 6312} (plain int)
                 create_data = create_resp.json() if create_resp.text else {}
-                result = create_data.get("result", create_data)
-                new_id = result.get("id") if isinstance(result, dict) else None
+                result = create_data.get("result")
+                if isinstance(result, int):
+                    new_id = result
+                elif isinstance(result, dict):
+                    new_id = result.get("id")
+                else:
+                    new_id = None
 
                 if not new_id:
                     failed.append({"number": clause_num, "step": "create", "error": f"No ID in response: {create_resp.text[:200]}"})
