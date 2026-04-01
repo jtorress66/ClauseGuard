@@ -3737,69 +3737,98 @@ def _build_agiloft_url(base_url: str, kb_name: str, endpoint: str) -> str:
     return f"{base}/ewws/alrest/{kb_name}/{endpoint}"
 
 
-# ==================== Agiloft SOAP API Helpers (zeep) ====================
-import zeep
-from zeep import Settings as ZeepSettings
+# ==================== Agiloft SOAP API Helpers (raw XML via httpx) ====================
+import xml.etree.ElementTree as ET
 
-_soap_client_cache = {}
+def _build_soap_url(kb_url: str, kb_name: str) -> str:
+    """Build the SOAP service URL."""
+    base = _norm_agiloft_base(kb_url)
+    return f"{base}/ewws/{kb_name.lower()}/EWWSv2Service"
 
-def _get_soap_client(kb_url: str, kb_name: str):
-    """Get or create a zeep SOAP client for the Agiloft instance.
-    Note: The WSDL path requires the lowercase KB name."""
-    kb_name_lower = kb_name.lower()
-    cache_key = f"{kb_url}:{kb_name_lower}"
-    if cache_key not in _soap_client_cache:
-        base = _norm_agiloft_base(kb_url)
-        wsdl = f"{base}/ewws/{kb_name_lower}/EWWSv2Service?wsdl"
-        service_url = f"{base}/ewws/{kb_name_lower}/EWWSv2Service"
-        settings = ZeepSettings(strict=False, xml_huge_tree=True)
-        soap_client = zeep.Client(wsdl, settings=settings)
-        soap_client.service._binding_options['address'] = service_url
-        _soap_client_cache[cache_key] = soap_client
-        logger.info(f"Created SOAP client for {base}, service URL: {service_url}")
-    return _soap_client_cache[cache_key]
+def _build_soap_ns(kb_name: str) -> str:
+    """Build the SOAP namespace for this KB."""
+    return f"http://{kb_name.lower()}.api.ws.enterprisewizard.com"
 
-def _soap_login(soap_client, kb_name: str, username: str, password: str) -> str:
+async def _soap_login(kb_url: str, kb_name: str, username: str, password: str) -> str:
     """Authenticate via SOAP EWLogin and return session ID."""
-    result = soap_client.service.EWLogin(
-        knowledgebase=kb_name,
-        user=username,
-        password=password,
-        language='en'
-    )
-    session_id = result if isinstance(result, str) else getattr(result, 'sessionId', str(result))
+    service_url = _build_soap_url(kb_url, kb_name)
+    ns = _build_soap_ns(kb_name)
+
+    # Escape XML special chars in credentials
+    from xml.sax.saxutils import escape
+    xml_body = f'''<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
+  <soapenv:Body>
+    <ns:EWLogin>
+      <knowledgebase>{escape(kb_name)}</knowledgebase>
+      <user>{escape(username)}</user>
+      <password>{escape(password)}</password>
+      <language>en</language>
+    </ns:EWLogin>
+  </soapenv:Body>
+</soapenv:Envelope>'''
+
+    async with httpx.AsyncClient(timeout=30.0, verify=True) as client:
+        resp = await client.post(service_url, content=xml_body.encode('utf-8'),
+                                  headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
+
+    # Parse response - extract sessionId or fault
+    resp_text = resp.text
+    if 'faultstring' in resp_text:
+        import re as _re
+        fault_match = _re.search(r'<faultstring>(.*?)</faultstring>', resp_text, _re.DOTALL)
+        raise Exception(f"SOAP Login Failed: {fault_match.group(1) if fault_match else resp_text[:300]}")
+
+    # Extract sessionId
+    session_match = re.search(r'<sessionId>(.*?)</sessionId>', resp_text)
+    if not session_match:
+        raise Exception(f"Could not extract sessionId from SOAP response: {resp_text[:300]}")
+
+    session_id = session_match.group(1)
     logger.info(f"SOAP login successful, session: {session_id[:20]}...")
     return session_id
 
-def _soap_create_ccm(soap_client, session_id: str, contract_id: int, clause_id: int, kb_name: str) -> int:
-    """Create a contract_clause_modification record via SOAP, linking clause to contract.
-    Returns the new record ID."""
-    kb_name_lower = kb_name.lower()
-    ns = f'http://{kb_name_lower}.api.ws.enterprisewizard.com'
-    CCM = soap_client.get_type(f'{{{ns}}}WSContract_Clause_Modification')
+async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_id: int, clause_id: int) -> int:
+    """Create a contract_clause_modification record via raw SOAP XML.
+    Only sends the two required linked fields (Contract + Clause) — nothing else."""
+    service_url = _build_soap_url(kb_url, kb_name)
+    ns = _build_soap_ns(kb_name)
 
-    EMPTY_DAO = {'entry': []}
-    obj = CCM(
-        DAOcontract_Clause_Modification_To_Ai_Clause_Type=EMPTY_DAO,
-        DAOcontract_Clause_Modification_To_Attachment=EMPTY_DAO,
-        DAOcontract_Clause_Modification_To_Clause={'entry': [{'key': 'id', 'value': str(clause_id)}]},
-        DAOcontract_Clause_Modification_To_Clause0=EMPTY_DAO,
-        DAOcontract_Clause_Modification_To_Clause_Type=EMPTY_DAO,
-        DAOcontract_Clause_Modification_To_Contacts=EMPTY_DAO,
-        DAOcontract_Clause_Modification_To_Contacts0=EMPTY_DAO,
-        DAOcontract_Clause_Modification_To_Contract={'entry': [{'key': 'id', 'value': str(contract_id)}]},
-        DAOcontract_Clause_Modification_To_Contract0=EMPTY_DAO,
-        DAOcontract_Clause_Modification_To_Function=EMPTY_DAO,
-        DAOcontract_Clause_Modification_To_Print_Template_Clause=EMPTY_DAO,
-    )
+    xml_body = f'''<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
+  <soapenv:Body>
+    <ns:EWCreate_WSContract_Clause_Modification>
+      <sessionId>{session_id}</sessionId>
+      <ewwsBaseUserObjectMap>
+        <DAOcontract_Clause_Modification_To_Contract>
+          <entry><key>id</key><value>{contract_id}</value></entry>
+        </DAOcontract_Clause_Modification_To_Contract>
+        <DAOcontract_Clause_Modification_To_Clause>
+          <entry><key>id</key><value>{clause_id}</value></entry>
+        </DAOcontract_Clause_Modification_To_Clause>
+      </ewwsBaseUserObjectMap>
+    </ns:EWCreate_WSContract_Clause_Modification>
+  </soapenv:Body>
+</soapenv:Envelope>'''
 
-    result = soap_client.service.EWCreate_WSContract_Clause_Modification(
-        sessionId=session_id,
-        ewwsBaseUserObjectMap=obj
-    )
-    # Result is recordIdentifier (long) or an object with .recordIdentifier
-    new_id = result if isinstance(result, int) else getattr(result, 'recordIdentifier', result)
-    return int(new_id)
+    async with httpx.AsyncClient(timeout=30.0, verify=True) as client:
+        resp = await client.post(service_url, content=xml_body.encode('utf-8'),
+                                  headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
+
+    resp_text = resp.text
+
+    # Check for SOAP fault
+    if 'faultstring' in resp_text:
+        fault_match = re.search(r'<faultstring>(.*?)</faultstring>', resp_text, re.DOTALL)
+        raise Exception(fault_match.group(1) if fault_match else resp_text[:300])
+
+    # Extract recordIdentifier
+    id_match = re.search(r'<recordIdentifier>(\d+)</recordIdentifier>', resp_text)
+    if not id_match:
+        raise Exception(f"No recordIdentifier in response: {resp_text[:300]}")
+
+    new_id = int(id_match.group(1))
+    return new_id
 
 async def agiloft_login(client: httpx.AsyncClient, config: AgiloftConfig) -> Dict[str, Any]:
     """
@@ -5652,9 +5681,8 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
     contract_id_int = int(link_request.contract_id)
 
     try:
-        # Get SOAP client and authenticate
-        soap_client = _get_soap_client(config.kb_url, config.kb_name)
-        session_id = _soap_login(soap_client, config.kb_name, config.username, config.password)
+        # SOAP login
+        session_id = await _soap_login(config.kb_url, config.kb_name, config.username, config.password)
 
         linked = []
         failed = []
@@ -5664,16 +5692,12 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
             clause_id_int = int(clause_id)
 
             try:
-                new_id = _soap_create_ccm(soap_client, session_id, contract_id_int, clause_id_int, config.kb_name)
+                new_id = await _soap_create_ccm(config.kb_url, config.kb_name, session_id, contract_id_int, clause_id_int)
                 logger.info(f"SOAP created CCM record {new_id} linking clause {clause_num} (lib_id={clause_id_int}) to contract {contract_id_int}")
                 linked.append({"number": clause_num, "clause_library_id": clause_id_int, "contract_clause_id": new_id})
-            except zeep.exceptions.Fault as e:
-                error_msg = str(e.message)[:300]
-                logger.error(f"SOAP fault linking {clause_num}: {error_msg}")
-                failed.append({"number": clause_num, "error": error_msg})
             except Exception as e:
                 error_msg = str(e)[:300]
-                logger.error(f"Error linking {clause_num}: {error_msg}")
+                logger.error(f"SOAP error linking {clause_num}: {error_msg}")
                 failed.append({"number": clause_num, "error": error_msg})
 
         return {
@@ -5687,9 +5711,6 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
             "message": f"Linked {len(linked)} clauses to contract {contract_id_int} via SOAP" if linked else "Failed - check errors",
         }
 
-    except zeep.exceptions.Fault as e:
-        logger.error(f"SOAP authentication fault: {e.message}")
-        return {"success": False, "message": f"SOAP auth failed: {e.message}"}
     except Exception as e:
         logger.error(f"Link clauses error: {e}")
         import traceback
@@ -5789,24 +5810,19 @@ async def create_missing_and_link(create_request: CreateAndLinkRequest, request:
 
         if all_clause_ids:
             try:
-                soap_client = _get_soap_client(config.kb_url, config.kb_name)
-                soap_session = _soap_login(soap_client, config.kb_name, config.username, config.password)
+                soap_session = await _soap_login(config.kb_url, config.kb_name, config.username, config.password)
 
                 for clause_num, clause_lib_id in all_clause_ids.items():
                     if not clause_lib_id:
                         continue
 
                     try:
-                        new_id = _soap_create_ccm(soap_client, soap_session, contract_id_int, int(clause_lib_id), config.kb_name)
+                        new_id = await _soap_create_ccm(config.kb_url, config.kb_name, soap_session, contract_id_int, int(clause_lib_id))
                         logger.info(f"SOAP linked {clause_num} (lib_id={clause_lib_id}) to contract {contract_id_int}, CCM id={new_id}")
                         link_results["linked"].append({"number": clause_num, "clause_library_id": int(clause_lib_id), "contract_clause_id": new_id})
-                    except zeep.exceptions.Fault as e:
-                        error_msg = str(e.message)[:300]
-                        logger.error(f"SOAP fault linking {clause_num}: {error_msg}")
-                        link_results["link_failed"].append({"number": clause_num, "error": error_msg})
                     except Exception as e:
                         error_msg = str(e)[:300]
-                        logger.error(f"Error linking {clause_num}: {error_msg}")
+                        logger.error(f"SOAP error linking {clause_num}: {error_msg}")
                         link_results["link_failed"].append({"number": clause_num, "error": error_msg})
             except Exception as e:
                 logger.error(f"SOAP linking setup error: {e}")
