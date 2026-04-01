@@ -5579,9 +5579,9 @@ class LinkClausesRequest(BaseModel):
 async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Request):
     """Link clauses to a contract via contract_clause_modification junction table.
     
-    Correct payload format (confirmed by user):
-      contract_id: plain integer (e.g. 690)
-      contract_clause_modification_to_clause: link object {"id": <int>}
+    Correct payload (confirmed by user):
+      contract_clause_modification_to_contract: {"id": <int>}  -- link object, id only
+      contract_clause_modification_to_clause:   {"id": <int>}  -- link object, id only
     """
     user = await require_auth(request)
     config = link_request.config
@@ -5605,11 +5605,12 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                 clause_num = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{clause_id}"
 
                 payload = {
-                    "contract_id": contract_id_int,
+                    "contract_clause_modification_to_contract": {"id": contract_id_int},
                     "contract_clause_modification_to_clause": {"id": int(clause_id)}
                 }
 
-                logger.info(f"Linking clause {clause_num} (lib id={clause_id}) to contract {contract_id_int}: {payload}")
+                import json as _json
+                logger.info(f"EXACT payload for {clause_num}: {_json.dumps(payload)}")
 
                 resp = await client.post(create_url, params={"lang": "en"}, json=payload, headers=headers)
                 logger.info(f"Link response for {clause_num}: {resp.status_code} {resp.text[:500]}")
