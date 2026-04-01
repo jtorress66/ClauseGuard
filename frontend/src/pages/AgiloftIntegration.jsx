@@ -630,35 +630,60 @@ export default function AgiloftIntegration({ user }) {
       const foundMap = {};
       verificationResult.found.forEach(c => { foundMap[c.number] = c.agiloft_id; });
 
-      const clauseIds = selectedForLink.filter(n => foundMap[n]).map(n => foundMap[n]);
-      const clauseNumbers = selectedForLink.filter(n => foundMap[n]);
-      const clauseTitles = clauseNumbers.map(n => {
-        const extracted = extractedClauses.find(c => c.number === n);
-        return extracted?.title || n;
-      });
+      const allClauseIds = selectedForLink.filter(n => foundMap[n]).map(n => foundMap[n]);
+      const allClauseNumbers = selectedForLink.filter(n => foundMap[n]);
 
-      const response = await fetch(`${API}/agiloft/link-clauses-to-contract`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          config,
-          contract_id: String(selectedUploadContract.id),
-          clause_ids: clauseIds,
-          clause_numbers: clauseNumbers,
-          clause_titles: clauseTitles,
-        })
-      });
+      // Process in batches of 5 to avoid proxy timeouts
+      const BATCH_SIZE = 5;
+      const allLinked = [];
+      const allFailed = [];
 
-      const result = await response.json();
-      setLinkResult(result);
-      if (result.success) {
-        toast.success(result.message || `Linked ${result.linked_count} clauses!`);
+      for (let i = 0; i < allClauseIds.length; i += BATCH_SIZE) {
+        const batchIds = allClauseIds.slice(i, i + BATCH_SIZE);
+        const batchNumbers = allClauseNumbers.slice(i, i + BATCH_SIZE);
+        const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+        const totalBatches = Math.ceil(allClauseIds.length / BATCH_SIZE);
+
+        toast.info(`Processing batch ${batchNum}/${totalBatches} (${batchNumbers.length} clauses)...`);
+
+        try {
+          const response = await fetch(`${API}/agiloft/link-clauses-to-contract`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+              config,
+              contract_id: String(selectedUploadContract.id),
+              clause_ids: batchIds,
+              clause_numbers: batchNumbers,
+            })
+          });
+
+          const result = await response.json();
+          if (result.linked) allLinked.push(...result.linked);
+          if (result.failed) allFailed.push(...result.failed);
+        } catch (batchError) {
+          allFailed.push(...batchNumbers.map(n => ({ number: n, error: String(batchError.message || batchError) })));
+        }
+      }
+
+      const finalResult = {
+        success: allLinked.length > 0,
+        linked_count: allLinked.length,
+        failed_count: allFailed.length,
+        linked: allLinked,
+        failed: allFailed,
+        method: "SOAP",
+        message: `Linked ${allLinked.length} clauses to contract${allFailed.length > 0 ? `, ${allFailed.length} failed` : ""}`,
+      };
+      setLinkResult(finalResult);
+      if (finalResult.success) {
+        toast.success(finalResult.message);
       } else {
-        toast.error(result.message || "Linking failed");
+        toast.error(finalResult.message || "Linking failed");
       }
     } catch (error) {
-      toast.error(`Link failed: ${error.message}`);
+      toast.error(`Link failed: ${String(error.message || error)}`);
     } finally {
       setLinking(false);
     }
