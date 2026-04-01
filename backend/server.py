@@ -5682,7 +5682,8 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                 edit_resp = await client.get(ew_edit_url, params=edit_params)
                 logger.info(f"EWEdit for {clause_num} (record {new_id}): {edit_resp.status_code} {edit_resp.text[:300]}")
 
-                # Step 3: Also fetch and set clause text via REST PUT
+                # Step 3: Populate fields via REST PUT
+                clause_type = "DFARS" if clause_num.startswith("252") else "FAR"
                 try:
                     clause_url = _build_agiloft_url(config.kb_url, config.kb_name, f"clause/{clause_id_int}")
                     cr = await client.get(clause_url, params={"lang": "en"}, headers=headers)
@@ -5697,6 +5698,21 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                                 headers=headers)
                 except Exception as e:
                     logger.warning(f"Text populate error for {clause_num}: {e}")
+
+                # Step 4: Try setting contract_id and contract_clause_type via separate PUTs
+                put_url = f"{rest_url}/{new_id}"
+                try:
+                    r1 = await client.put(put_url, params={"lang": "en"},
+                        json={"contract_clause_type": clause_type}, headers=headers)
+                    logger.info(f"PUT contract_clause_type={clause_type} on {new_id}: {r1.status_code} {r1.text[:200]}")
+                except Exception:
+                    pass
+                try:
+                    r2 = await client.put(put_url, params={"lang": "en"},
+                        json={"contract_id": str(contract_id_int)}, headers=headers)
+                    logger.info(f"PUT contract_id={contract_id_int} on {new_id}: {r2.status_code} {r2.text[:200]}")
+                except Exception:
+                    pass
 
                 linked.append({"number": clause_num, "clause_library_id": clause_id_int, "contract_clause_id": new_id})
 
