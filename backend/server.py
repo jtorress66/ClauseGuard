@@ -3804,20 +3804,12 @@ async def _soap_login(kb_url: str, kb_name: str, username: str, password: str) -
 
 async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_id: int, clause_id: int, clause_text: str = "", clause_type: str = "") -> int:
     """Create a contract_clause_modification record via raw SOAP XML.
-    Sets linked fields (Contract + Clause) and optional text/metadata."""
+    Sets linked fields (Contract + Clause), then edits to add text/metadata."""
     service_url = _build_soap_url(kb_url, kb_name)
     ns = _build_soap_ns(kb_name)
 
-    # Build optional field XML elements
-    extra_fields = ""
-    if clause_text:
-        from xml.sax.saxutils import escape as xml_escape
-        escaped_text = xml_escape(clause_text)
-        extra_fields += f"\n        <current_clause_text>{escaped_text}</current_clause_text>"
-        extra_fields += f"\n        <source_text>{escaped_text}</source_text>"
-        extra_fields += f"\n        <accepted_clause_text>{escaped_text}</accepted_clause_text>"
-
-    xml_body = f'''<?xml version="1.0" encoding="UTF-8"?>
+    # Step 1: Create the junction record (only DAO linked fields)
+    create_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
   <soapenv:Body>
     <ns:EWCreate_WSContract_Clause_Modification>
@@ -3828,43 +3820,66 @@ async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_
         </DAOcontract_Clause_Modification_To_Contract>
         <DAOcontract_Clause_Modification_To_Clause>
           <entry><key>id</key><value>{clause_id}</value></entry>
-        </DAOcontract_Clause_Modification_To_Clause>{extra_fields}
+        </DAOcontract_Clause_Modification_To_Clause>
       </ewwsBaseUserObjectMap>
     </ns:EWCreate_WSContract_Clause_Modification>
   </soapenv:Body>
 </soapenv:Envelope>'''
 
     async with httpx.AsyncClient(timeout=30.0, verify=True) as client:
-        resp = await client.post(service_url, content=xml_body.encode('utf-8'),
+        resp = await client.post(service_url, content=create_xml.encode('utf-8'),
                                   headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
 
     resp_text = resp.text.strip()
-
-    # Handle MTOM/multipart responses
     if '--uuid:' in resp_text or resp_text.startswith('--'):
         xml_start = resp_text.find('<soap:Envelope')
         if xml_start == -1:
             xml_start = resp_text.find('<soap-env:Envelope')
         if xml_start >= 0:
-            xml_end = resp_text.rfind('</soap:Envelope>')
-            if xml_end == -1:
-                xml_end = resp_text.rfind('</soap-env:Envelope>')
-            if xml_end >= 0:
-                resp_text = resp_text[xml_start:xml_end + len('</soap:Envelope>') + 5]
-            else:
-                resp_text = resp_text[xml_start:]
+            resp_text = resp_text[xml_start:]
 
-    # Check for SOAP fault
     if 'faultstring' in resp_text:
         fault_match = re.search(r'<faultstring>(.*?)</faultstring>', resp_text, re.DOTALL)
         raise Exception(fault_match.group(1) if fault_match else resp_text[:300])
 
-    # Extract recordIdentifier (tag may have xmlns attributes or namespace prefix)
     id_match = re.search(r'<(?:\w+:)?recordIdentifier[^>]*>(\d+)</(?:\w+:)?recordIdentifier>', resp_text)
     if not id_match:
         raise Exception(f"No recordIdentifier in response: {resp_text[:300]}")
 
     new_id = int(id_match.group(1))
+
+    # Step 2: Edit the record to populate text fields via EWEdit
+    if clause_text:
+        try:
+            from xml.sax.saxutils import escape as xml_escape
+            escaped_text = xml_escape(clause_text)
+            edit_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
+  <soapenv:Body>
+    <ns:EWEdit_WSContract_Clause_Modification>
+      <sessionId>{session_id}</sessionId>
+      <ewwsBaseUserObjectMap>
+        <id>{new_id}</id>
+        <current_clause_text>{escaped_text}</current_clause_text>
+        <source_text>{escaped_text}</source_text>
+        <accepted_clause_text>{escaped_text}</accepted_clause_text>
+      </ewwsBaseUserObjectMap>
+    </ns:EWEdit_WSContract_Clause_Modification>
+  </soapenv:Body>
+</soapenv:Envelope>'''
+
+            async with httpx.AsyncClient(timeout=30.0, verify=True) as client:
+                edit_resp = await client.post(service_url, content=edit_xml.encode('utf-8'),
+                                              headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
+            edit_text = edit_resp.text.strip()
+            if 'faultstring' in edit_text:
+                fault = re.search(r'<faultstring>(.*?)</faultstring>', edit_text, re.DOTALL)
+                logger.warning(f"SOAP EWEdit fault on CCM {new_id}: {fault.group(1)[:200] if fault else edit_text[:200]}")
+            else:
+                logger.info(f"SOAP EWEdit on CCM {new_id}: text populated ({len(clause_text)} chars)")
+        except Exception as e:
+            logger.warning(f"SOAP EWEdit failed for CCM {new_id}: {e}")
+
     return new_id
 
 async def agiloft_login(client: httpx.AsyncClient, config: AgiloftConfig) -> Dict[str, Any]:
