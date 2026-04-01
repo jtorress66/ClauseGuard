@@ -5601,9 +5601,10 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
             rest_url = _build_agiloft_url(config.kb_url, config.kb_name, TABLE)
             contract_id_int = int(link_request.contract_id)
 
-            # Old EW endpoint base URLs
-            ew_edit_url = f"{config.kb_url.rstrip('/')}/ewws/EWEdit"
-            ew_create_url = f"{config.kb_url.rstrip('/')}/ewws/EWCreate"
+            # Old EW endpoint base URLs (use normalized base)
+            ew_base = _norm_agiloft_base(config.kb_url)
+            ew_edit_url = f"{ew_base}/ewws/EWEdit"
+            ew_create_url = f"{ew_base}/ewws/EWCreate"
 
             linked = []
             failed = []
