@@ -3736,6 +3736,69 @@ def _build_agiloft_url(base_url: str, kb_name: str, endpoint: str) -> str:
     base = _norm_agiloft_base(base_url)
     return f"{base}/ewws/alrest/{kb_name}/{endpoint}"
 
+
+# ==================== Agiloft SOAP API Helpers (zeep) ====================
+import zeep
+from zeep import Settings as ZeepSettings
+
+_soap_client_cache = {}
+
+def _get_soap_client(kb_url: str, kb_name: str):
+    """Get or create a zeep SOAP client for the Agiloft instance."""
+    cache_key = f"{kb_url}:{kb_name}"
+    if cache_key not in _soap_client_cache:
+        base = _norm_agiloft_base(kb_url)
+        wsdl = f"{base}/ewws/{kb_name}/EWWSv2Service?wsdl"
+        service_url = f"{base}/ewws/{kb_name}/EWWSv2Service"
+        settings = ZeepSettings(strict=False, xml_huge_tree=True)
+        soap_client = zeep.Client(wsdl, settings=settings)
+        soap_client.service._binding_options['address'] = service_url
+        _soap_client_cache[cache_key] = soap_client
+        logger.info(f"Created SOAP client for {base}, service URL: {service_url}")
+    return _soap_client_cache[cache_key]
+
+def _soap_login(soap_client, kb_name: str, username: str, password: str) -> str:
+    """Authenticate via SOAP EWLogin and return session ID."""
+    result = soap_client.service.EWLogin(
+        knowledgebase=kb_name,
+        user=username,
+        password=password,
+        language='en'
+    )
+    session_id = result if isinstance(result, str) else getattr(result, 'sessionId', str(result))
+    logger.info(f"SOAP login successful, session: {session_id[:20]}...")
+    return session_id
+
+def _soap_create_ccm(soap_client, session_id: str, contract_id: int, clause_id: int, kb_name: str) -> int:
+    """Create a contract_clause_modification record via SOAP, linking clause to contract.
+    Returns the new record ID."""
+    ns = f'http://{kb_name}.api.ws.enterprisewizard.com'
+    CCM = soap_client.get_type(f'{{{ns}}}WSContract_Clause_Modification')
+
+    EMPTY_DAO = {'entry': []}
+    obj = CCM(
+        DAOcontract_Clause_Modification_To_Ai_Clause_Type=EMPTY_DAO,
+        DAOcontract_Clause_Modification_To_Attachment=EMPTY_DAO,
+        DAOcontract_Clause_Modification_To_Clause={'entry': [{'key': 'id', 'value': str(clause_id)}]},
+        DAOcontract_Clause_Modification_To_Clause0=EMPTY_DAO,
+        DAOcontract_Clause_Modification_To_Clause_Type=EMPTY_DAO,
+        DAOcontract_Clause_Modification_To_Contacts=EMPTY_DAO,
+        DAOcontract_Clause_Modification_To_Contacts0=EMPTY_DAO,
+        DAOcontract_Clause_Modification_To_Contract={'entry': [{'key': 'id', 'value': str(contract_id)}]},
+        DAOcontract_Clause_Modification_To_Contract0=EMPTY_DAO,
+        DAOcontract_Clause_Modification_To_Function=EMPTY_DAO,
+        DAOcontract_Clause_Modification_To_Print_Template_Clause=EMPTY_DAO,
+        source={'type': 'Added from Library'}
+    )
+
+    result = soap_client.service.EWCreate_WSContract_Clause_Modification(
+        sessionId=session_id,
+        ewwsBaseUserObjectMap=obj
+    )
+    # Result is recordIdentifier (long) or an object with .recordIdentifier
+    new_id = result if isinstance(result, int) else getattr(result, 'recordIdentifier', result)
+    return int(new_id)
+
 async def agiloft_login(client: httpx.AsyncClient, config: AgiloftConfig) -> Dict[str, Any]:
     """
     Agiloft REST API login.
@@ -5577,157 +5640,54 @@ class LinkClausesRequest(BaseModel):
 
 @agiloft_router.post("/link-clauses-to-contract")
 async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Request):
-    """Link clauses to a contract.
+    """Link clauses to a contract via Agiloft SOAP API.
     
-    Strategy:
-    1. Create bare record via new REST API (POST {}) — this works
-    2. Set linked fields via OLD EWEdit endpoint — handles swdao3link natively
-    3. Populate text via new REST API PUT
+    Uses zeep SOAP client to create contract_clause_modification records,
+    which the REST API cannot do for swdao3link junction table fields.
     """
-    import re
     user = await require_auth(request)
     config = link_request.config
-    TABLE = "contract_clause_modification"
+    contract_id_int = int(link_request.contract_id)
 
     try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            # Auth for new REST API
-            login_data = await agiloft_login(client, config)
-            token = login_data.get("access_token")
-            if not token:
-                raise HTTPException(status_code=401, detail="Authentication failed")
+        # Get SOAP client and authenticate
+        soap_client = _get_soap_client(config.kb_url, config.kb_name)
+        session_id = _soap_login(soap_client, config.kb_name, config.username, config.password)
 
-            headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
-            rest_url = _build_agiloft_url(config.kb_url, config.kb_name, TABLE)
-            contract_id_int = int(link_request.contract_id)
+        linked = []
+        failed = []
 
-            # Old EW endpoint base URLs (use normalized base)
-            ew_base = _norm_agiloft_base(config.kb_url)
-            ew_edit_url = f"{ew_base}/ewws/EWEdit"
-            ew_create_url = f"{ew_base}/ewws/EWCreate"
+        for i, clause_id in enumerate(link_request.clause_ids):
+            clause_num = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{clause_id}"
+            clause_id_int = int(clause_id)
 
-            linked = []
-            failed = []
-
-            for i, clause_id in enumerate(link_request.clause_ids):
-                clause_num = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{clause_id}"
-                clause_id_int = int(clause_id)
-
-                # Step 1: Create bare record via new REST API
-                create_resp = await client.post(rest_url, params={"lang": "en"}, json={}, headers=headers)
-
-                new_id = None
-                if create_resp.status_code in [200, 201]:
-                    rd = create_resp.json() if create_resp.text else {}
-                    if rd.get("success") is not False:
-                        result = rd.get("result")
-                        new_id = result if isinstance(result, int) else (result.get("id") if isinstance(result, dict) else None)
-
-                if not new_id:
-                    # Try creating via old EWCreate instead
-                    ew_params = {
-                        "$KB": config.kb_name,
-                        "$table": TABLE,
-                        "$login": config.username,
-                        "$password": config.password,
-                        "$lang": "en",
-                        "contract_clause_modification_to_contract": str(contract_id_int),
-                        "contract_clause_modification_to_clause": str(clause_id_int),
-                        "source": "Added from Library",
-                    }
-                    ew_resp = await client.get(ew_create_url, params=ew_params)
-                    logger.info(f"EWCreate fallback for {clause_num}: {ew_resp.status_code} {ew_resp.text[:300]}")
-
-                    if ew_resp.status_code == 200 and ("id=" in ew_resp.text.lower() or ew_resp.text.strip().isdigit()):
-                        try:
-                            # Try parsing ID from various response formats
-                            txt = ew_resp.text.strip()
-                            if txt.isdigit():
-                                new_id = int(txt)
-                            elif "EWREST_id=" in txt:
-                                for part in txt.split(";"):
-                                    if "EWREST_id=" in part:
-                                        new_id = int(part.split("=")[1].strip("'\""))
-                                        break
-                        except (ValueError, IndexError):
-                            pass
-
-                    if new_id:
-                        linked.append({"number": clause_num, "clause_library_id": clause_id_int, "contract_clause_id": new_id})
-                        continue
-                    elif not new_id and create_resp.status_code not in [200, 201]:
-                        failed.append({"number": clause_num, "error": f"Cannot create: {create_resp.text[:200]}"})
-                        if i == 0:
-                            return {"success": False, "message": "Cannot create records", "failed": failed}
-                        continue
-
-                logger.info(f"Created record {new_id} for {clause_num}, setting linked fields via EWEdit")
-
-                # Step 2: Set linked fields + metadata via OLD EWEdit
-                clause_type = "DFARS" if clause_num.startswith("252") else "FAR"
-                edit_params = {
-                    "$KB": config.kb_name,
-                    "$table": TABLE,
-                    "$login": config.username,
-                    "$password": config.password,
-                    "$lang": "en",
-                    "id": str(new_id),
-                    "contract_clause_modification_to_contract": str(contract_id_int),
-                    "contract_clause_modification_to_clause": str(clause_id_int),
-                    "contract_id": str(contract_id_int),
-                    "contract_clause_type": clause_type,
-                    "source": "Added from Library",
-                }
-
-                edit_resp = await client.get(ew_edit_url, params=edit_params)
-                logger.info(f"EWEdit for {clause_num} (record {new_id}): {edit_resp.status_code} {edit_resp.text[:300]}")
-
-                # Step 3: Populate fields via REST PUT
-                clause_type = "DFARS" if clause_num.startswith("252") else "FAR"
-                try:
-                    clause_url = _build_agiloft_url(config.kb_url, config.kb_name, f"clause/{clause_id_int}")
-                    cr = await client.get(clause_url, params={"lang": "en"}, headers=headers)
-                    if cr.status_code == 200:
-                        cdata = cr.json().get("result", {})
-                        raw = cdata.get("clause_text", "") if isinstance(cdata, dict) else ""
-                        clean = re.sub(r'<!--.*?-->', '', raw, flags=re.DOTALL).strip()
-                        if clean:
-                            put_url = f"{rest_url}/{new_id}"
-                            await client.put(put_url, params={"lang": "en"},
-                                json={"clause_text": clean, "accepted_clause_text": clean, "source_text": clean, "source": "Added from Library"},
-                                headers=headers)
-                except Exception as e:
-                    logger.warning(f"Text populate error for {clause_num}: {e}")
-
-                # Step 4: Try setting contract_id and contract_clause_type via separate PUTs
-                put_url = f"{rest_url}/{new_id}"
-                try:
-                    r1 = await client.put(put_url, params={"lang": "en"},
-                        json={"contract_clause_type": clause_type}, headers=headers)
-                    logger.info(f"PUT contract_clause_type={clause_type} on {new_id}: {r1.status_code} {r1.text[:200]}")
-                except Exception:
-                    pass
-                try:
-                    r2 = await client.put(put_url, params={"lang": "en"},
-                        json={"contract_id": str(contract_id_int)}, headers=headers)
-                    logger.info(f"PUT contract_id={contract_id_int} on {new_id}: {r2.status_code} {r2.text[:200]}")
-                except Exception:
-                    pass
-
+            try:
+                new_id = _soap_create_ccm(soap_client, session_id, contract_id_int, clause_id_int, config.kb_name)
+                logger.info(f"SOAP created CCM record {new_id} linking clause {clause_num} (lib_id={clause_id_int}) to contract {contract_id_int}")
                 linked.append({"number": clause_num, "clause_library_id": clause_id_int, "contract_clause_id": new_id})
+            except zeep.exceptions.Fault as e:
+                error_msg = str(e.message)[:300]
+                logger.error(f"SOAP fault linking {clause_num}: {error_msg}")
+                failed.append({"number": clause_num, "error": error_msg})
+            except Exception as e:
+                error_msg = str(e)[:300]
+                logger.error(f"Error linking {clause_num}: {error_msg}")
+                failed.append({"number": clause_num, "error": error_msg})
 
-            return {
-                "success": len(linked) > 0,
-                "linked_count": len(linked),
-                "failed_count": len(failed),
-                "linked": linked,
-                "failed": failed,
-                "table_used": TABLE,
-                "message": f"Processed {len(linked)} clauses for contract {contract_id_int}" if linked else "Failed - check errors",
-            }
+        return {
+            "success": len(linked) > 0,
+            "linked_count": len(linked),
+            "failed_count": len(failed),
+            "linked": linked,
+            "failed": failed,
+            "table_used": "contract_clause_modification",
+            "method": "SOAP",
+            "message": f"Linked {len(linked)} clauses to contract {contract_id_int} via SOAP" if linked else "Failed - check errors",
+        }
 
-    except HTTPException:
-        raise
+    except zeep.exceptions.Fault as e:
+        logger.error(f"SOAP authentication fault: {e.message}")
+        return {"success": False, "message": f"SOAP auth failed: {e.message}"}
     except Exception as e:
         logger.error(f"Link clauses error: {e}")
         import traceback
@@ -5822,42 +5782,33 @@ async def create_missing_and_link(create_request: CreateAndLinkRequest, request:
         logger.info(f"Upload complete: {len(uploaded)} uploaded, {len(upload_failed)} failed")
         logger.info(f"All clause IDs for linking: {all_clause_ids}")
 
-        # Step 2: Link all clauses (existing + newly uploaded) to the contract
+        # Step 2: Link all clauses (existing + newly uploaded) to the contract via SOAP
         link_results = {"linked": [], "link_failed": []}
 
         if all_clause_ids:
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                login_data = await agiloft_login(client, config)
-                token = login_data.get("access_token")
-                if token:
-                    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
-                    TABLE = "contract_clause_modification"
-                    create_url = _build_agiloft_url(config.kb_url, config.kb_name, TABLE)
+            try:
+                soap_client = _get_soap_client(config.kb_url, config.kb_name)
+                soap_session = _soap_login(soap_client, config.kb_name, config.username, config.password)
 
-                    for clause_num, clause_lib_id in all_clause_ids.items():
-                        if not clause_lib_id:
-                            continue
+                for clause_num, clause_lib_id in all_clause_ids.items():
+                    if not clause_lib_id:
+                        continue
 
-                        payload = {
-                            "contract_clause_modification_to_contract": {"id": contract_id_int},
-                            "contract_clause_modification_to_clause": {"id": int(clause_lib_id)}
-                        }
-
-                        logger.info(f"Linking {clause_num} (lib_id={clause_lib_id}) to contract {contract_id_int}")
-                        resp = await client.post(create_url, params={"lang": "en"}, json=payload, headers=headers)
-                        resp_text = resp.text[:500]
-                        logger.info(f"Link result for {clause_num}: {resp.status_code} {resp_text}")
-
-                        if resp.status_code in [200, 201]:
-                            rd = resp.json() if resp.text else {}
-                            if rd.get("success") is not False:
-                                result = rd.get("result")
-                                new_id = result if isinstance(result, int) else (result.get("id") if isinstance(result, dict) else None)
-                                link_results["linked"].append({"number": clause_num, "clause_library_id": int(clause_lib_id), "contract_clause_id": new_id})
-                            else:
-                                link_results["link_failed"].append({"number": clause_num, "error": resp_text[:200]})
-                        else:
-                            link_results["link_failed"].append({"number": clause_num, "error": resp_text[:200]})
+                    try:
+                        new_id = _soap_create_ccm(soap_client, soap_session, contract_id_int, int(clause_lib_id), config.kb_name)
+                        logger.info(f"SOAP linked {clause_num} (lib_id={clause_lib_id}) to contract {contract_id_int}, CCM id={new_id}")
+                        link_results["linked"].append({"number": clause_num, "clause_library_id": int(clause_lib_id), "contract_clause_id": new_id})
+                    except zeep.exceptions.Fault as e:
+                        error_msg = str(e.message)[:300]
+                        logger.error(f"SOAP fault linking {clause_num}: {error_msg}")
+                        link_results["link_failed"].append({"number": clause_num, "error": error_msg})
+                    except Exception as e:
+                        error_msg = str(e)[:300]
+                        logger.error(f"Error linking {clause_num}: {error_msg}")
+                        link_results["link_failed"].append({"number": clause_num, "error": error_msg})
+            except Exception as e:
+                logger.error(f"SOAP linking setup error: {e}")
+                link_results["link_failed"].append({"number": "ALL", "error": f"SOAP setup: {str(e)[:200]}"})
 
         return {
             "success": len(uploaded) > 0 or len(link_results["linked"]) > 0,
@@ -5869,7 +5820,8 @@ async def create_missing_and_link(create_request: CreateAndLinkRequest, request:
             "link_failed_count": len(link_results["link_failed"]),
             "linked": link_results["linked"],
             "link_failed": link_results["link_failed"],
-            "message": f"Uploaded {len(uploaded)} clauses, linked {len(link_results['linked'])} to contract {contract_id_int}",
+            "message": f"Uploaded {len(uploaded)} clauses, linked {len(link_results['linked'])} to contract {contract_id_int} via SOAP",
+            "method": "SOAP",
         }
 
     except Exception as e:
