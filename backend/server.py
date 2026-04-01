@@ -5579,10 +5579,9 @@ class LinkClausesRequest(BaseModel):
 async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Request):
     """Link clauses to a contract via contract_clause_modification junction table.
     
-    Agiloft stores contract/clause references as plain string ID fields:
-      contract_id: "690"  (string)
-      clause_id: "4329"   (string)
-    The DAO-prefixed linked fields are auto-populated by Agiloft.
+    The linked field contract_clause_modification_to_contract is read-only —
+    it gets auto-set when creating from the contract context.
+    We try creating via the contract's nested endpoint first.
     """
     import json as _json
     user = await require_auth(request)
@@ -5598,37 +5597,106 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
 
             headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
             contract_id_str = str(int(link_request.contract_id))
-            base_url = _build_agiloft_url(config.kb_url, config.kb_name, TABLE)
+            
+            # Flat URL for direct table access
+            flat_url = _build_agiloft_url(config.kb_url, config.kb_name, TABLE)
+            # Nested URL: create child record in context of parent contract
+            nested_url = _build_agiloft_url(config.kb_url, config.kb_name, f"contract/{contract_id_str}/{TABLE}")
 
             linked = []
             failed = []
+            working_approach = None
 
-            for i, clause_id in enumerate(link_request.clause_ids):
-                clause_num = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{clause_id}"
-                clause_title = link_request.clause_titles[i] if i < len(link_request.clause_titles) else ""
+            first_clause_id = int(link_request.clause_ids[0]) if link_request.clause_ids else None
+            first_clause_num = link_request.clause_numbers[0] if link_request.clause_numbers else None
 
-                payload = {
-                    "contract_id": contract_id_str,
-                    "clause_id": str(int(clause_id)),
-                    "source": "Added from Library",
-                }
+            if first_clause_id is None:
+                return {"success": False, "message": "No clause IDs provided"}
 
-                logger.info(f"Creating contract_clause_modification for {clause_num}: {_json.dumps(payload)}")
+            # Try multiple approaches on the FIRST clause only
+            approaches = [
+                # A: Nested endpoint with clause_id only
+                {"name": "nested_clause_id", "url": nested_url, "payload": {"clause_id": str(first_clause_id)}},
+                # B: Nested endpoint with clause_id + source
+                {"name": "nested_clause_id_source", "url": nested_url, "payload": {"clause_id": str(first_clause_id), "source": "Added from Library"}},
+                # C: Nested endpoint empty (let Agiloft default everything)
+                {"name": "nested_empty_then_update", "url": nested_url, "payload": {}},
+                # D: Flat with only clause_id (no contract ref at all)
+                {"name": "flat_clause_only", "url": flat_url, "payload": {"clause_id": str(first_clause_id)}},
+            ]
 
-                resp = await client.post(base_url, params={"lang": "en"}, json=payload, headers=headers)
-                resp_body = resp.text[:500]
-                logger.info(f"Response for {clause_num}: {resp.status_code} {resp_body}")
+            for approach in approaches:
+                logger.info(f"Approach '{approach['name']}': POST {approach['url']} payload={_json.dumps(approach['payload'])}")
+                resp = await client.post(approach["url"], params={"lang": "en"}, json=approach["payload"], headers=headers)
+                resp_text = resp.text[:500]
+                logger.info(f"Approach '{approach['name']}' response: {resp.status_code} {resp_text}")
 
                 if resp.status_code in [200, 201]:
                     rd = resp.json() if resp.text else {}
-                    if rd.get("success") is False:
-                        failed.append({"number": clause_num, "error": resp_body})
-                    else:
+                    if rd.get("success") is not False:
                         result = rd.get("result")
                         new_id = result if isinstance(result, int) else (result.get("id") if isinstance(result, dict) else None)
-                        linked.append({"number": clause_num, "clause_library_id": int(clause_id), "contract_clause_id": new_id})
+                        if new_id:
+                            # Verify it has the contract link
+                            verify_url = f"{flat_url}/{new_id}"
+                            vr = await client.get(verify_url, params={"lang": "en"}, headers=headers)
+                            vdata = {}
+                            if vr.status_code == 200:
+                                vdata = vr.json().get("result", {})
+                                logger.info(f"Verify record {new_id}: contract_id={vdata.get('contract_id')}, clause_id={vdata.get('clause_id')}")
+
+                            working_approach = approach["name"]
+                            linked.append({"number": first_clause_num, "clause_library_id": first_clause_id, "contract_clause_id": new_id})
+
+                            # If nested_empty, we need to update with clause_id
+                            if approach["name"] == "nested_empty_then_update" and not vdata.get("clause_id"):
+                                upd = await client.put(verify_url, params={"lang": "en"},
+                                    json={"clause_id": str(first_clause_id)}, headers=headers)
+                                logger.info(f"Update clause_id on {new_id}: {upd.status_code} {upd.text[:300]}")
+
+                            logger.info(f"SUCCESS with approach '{working_approach}'!")
+                            break
+                    else:
+                        logger.info(f"Approach '{approach['name']}' returned success=false")
                 else:
-                    failed.append({"number": clause_num, "error": resp_body})
+                    logger.info(f"Approach '{approach['name']}' HTTP error: {resp.status_code}")
+
+            if not working_approach:
+                return {
+                    "success": False,
+                    "message": "All approaches failed - check backend logs",
+                    "table_used": TABLE,
+                    "failed": [{"number": first_clause_num, "error": "All approaches failed"}],
+                    "approaches_tried": [a["name"] for a in approaches],
+                }
+
+            # Process remaining clauses with the working approach
+            working = next(a for a in approaches if a["name"] == working_approach)
+            for i in range(1, len(link_request.clause_ids)):
+                cid = int(link_request.clause_ids[i])
+                cnum = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{cid}"
+
+                # Rebuild payload replacing clause_id
+                payload = {k: v for k, v in working["payload"].items()}
+                if "clause_id" in payload:
+                    payload["clause_id"] = str(cid)
+
+                resp = await client.post(working["url"], params={"lang": "en"}, json=payload, headers=headers)
+                if resp.status_code in [200, 201]:
+                    rd = resp.json() if resp.text else {}
+                    if rd.get("success") is not False:
+                        result = rd.get("result")
+                        new_id = result if isinstance(result, int) else (result.get("id") if isinstance(result, dict) else None)
+                        linked.append({"number": cnum, "clause_library_id": cid, "contract_clause_id": new_id})
+
+                        if working_approach == "nested_empty_then_update" and new_id:
+                            upd_url = f"{flat_url}/{new_id}"
+                            await client.put(upd_url, params={"lang": "en"},
+                                json={"clause_id": str(cid)}, headers=headers)
+                    else:
+                        failed.append({"number": cnum, "error": resp.text[:200]})
+                else:
+                    failed.append({"number": cnum, "error": resp.text[:200]})
 
             return {
                 "success": len(linked) > 0,
@@ -5637,7 +5705,8 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                 "linked": linked,
                 "failed": failed,
                 "table_used": TABLE,
-                "message": f"Linked {len(linked)} clauses to contract {contract_id_str}" if linked else "Failed - check errors",
+                "working_approach": working_approach,
+                "message": f"Linked {len(linked)} clauses to contract {contract_id_str} (via {working_approach})" if linked else "Failed",
             }
 
     except HTTPException:
