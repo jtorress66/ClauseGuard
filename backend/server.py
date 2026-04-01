@@ -5712,21 +5712,66 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
         # SOAP login
         session_id = await _soap_login(config.kb_url, config.kb_name, config.username, config.password)
 
+        # REST login for follow-up field population
+        rest_token = None
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as http_client:
+                login_data = await agiloft_login(http_client, config)
+                rest_token = login_data.get("access_token")
+        except Exception as e:
+            logger.warning(f"REST login for field population failed (non-fatal): {e}")
+
         linked = []
         failed = []
 
-        for i, clause_id in enumerate(link_request.clause_ids):
-            clause_num = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{clause_id}"
-            clause_id_int = int(clause_id)
+        async with httpx.AsyncClient(timeout=300.0) as http_client:
+            rest_headers = {"Content-Type": "application/json", "Authorization": f"Bearer {rest_token}"} if rest_token else {}
+            ccm_url_base = _build_agiloft_url(config.kb_url, config.kb_name, "contract_clause_modification")
 
-            try:
-                new_id = await _soap_create_ccm(config.kb_url, config.kb_name, session_id, contract_id_int, clause_id_int)
-                logger.info(f"SOAP created CCM record {new_id} linking clause {clause_num} (lib_id={clause_id_int}) to contract {contract_id_int}")
-                linked.append({"number": clause_num, "clause_library_id": clause_id_int, "contract_clause_id": new_id})
-            except Exception as e:
-                error_msg = str(e)[:300]
-                logger.error(f"SOAP error linking {clause_num}: {error_msg}")
-                failed.append({"number": clause_num, "error": error_msg})
+            for i, clause_id in enumerate(link_request.clause_ids):
+                clause_num = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{clause_id}"
+                clause_id_int = int(clause_id)
+
+                try:
+                    # Step 1: Create junction record via SOAP (sets linked fields)
+                    new_id = await _soap_create_ccm(config.kb_url, config.kb_name, session_id, contract_id_int, clause_id_int)
+                    logger.info(f"SOAP created CCM record {new_id} linking clause {clause_num} (lib_id={clause_id_int}) to contract {contract_id_int}")
+
+                    # Step 2: Populate text/metadata via REST PUT
+                    if rest_token:
+                        try:
+                            # Fetch clause text from Agiloft Clause Library
+                            clause_url = _build_agiloft_url(config.kb_url, config.kb_name, f"clause/{clause_id_int}")
+                            cr = await http_client.get(clause_url, params={"lang": "en"}, headers=rest_headers)
+                            clause_text = ""
+                            clause_title = ""
+                            if cr.status_code == 200:
+                                cdata = cr.json().get("result", {})
+                                if isinstance(cdata, dict):
+                                    raw = cdata.get("clause_text", "")
+                                    clause_text = re.sub(r'<!--.*?-->', '', raw, flags=re.DOTALL).strip()
+                                    clause_title = cdata.get("clause_title", "")
+
+                            clause_type = "DFARS" if clause_num.startswith("252") else "FAR"
+                            put_payload = {
+                                "contract_clause_type": clause_type,
+                            }
+                            if clause_text:
+                                put_payload["current_clause_text"] = clause_text
+                                put_payload["source_text"] = clause_text
+                                put_payload["accepted_clause_text"] = clause_text
+
+                            put_url = f"{ccm_url_base}/{new_id}"
+                            pr = await http_client.put(put_url, params={"lang": "en"}, json=put_payload, headers=rest_headers)
+                            logger.info(f"REST PUT on CCM {new_id} for {clause_num}: {pr.status_code}")
+                        except Exception as e:
+                            logger.warning(f"REST populate for {clause_num} (CCM {new_id}) failed (non-fatal): {e}")
+
+                    linked.append({"number": clause_num, "clause_library_id": clause_id_int, "contract_clause_id": new_id})
+                except Exception as e:
+                    error_msg = str(e)[:300]
+                    logger.error(f"SOAP error linking {clause_num}: {error_msg}")
+                    failed.append({"number": clause_num, "error": error_msg})
 
         return {
             "success": len(linked) > 0,
@@ -5840,18 +5885,56 @@ async def create_missing_and_link(create_request: CreateAndLinkRequest, request:
             try:
                 soap_session = await _soap_login(config.kb_url, config.kb_name, config.username, config.password)
 
-                for clause_num, clause_lib_id in all_clause_ids.items():
-                    if not clause_lib_id:
-                        continue
+                # REST login for follow-up field population
+                rest_token = None
+                try:
+                    async with httpx.AsyncClient(timeout=60.0) as rest_client:
+                        rest_login = await agiloft_login(rest_client, config)
+                        rest_token = rest_login.get("access_token")
+                except Exception:
+                    pass
 
-                    try:
-                        new_id = await _soap_create_ccm(config.kb_url, config.kb_name, soap_session, contract_id_int, int(clause_lib_id))
-                        logger.info(f"SOAP linked {clause_num} (lib_id={clause_lib_id}) to contract {contract_id_int}, CCM id={new_id}")
-                        link_results["linked"].append({"number": clause_num, "clause_library_id": int(clause_lib_id), "contract_clause_id": new_id})
-                    except Exception as e:
-                        error_msg = str(e)[:300]
-                        logger.error(f"SOAP error linking {clause_num}: {error_msg}")
-                        link_results["link_failed"].append({"number": clause_num, "error": error_msg})
+                async with httpx.AsyncClient(timeout=300.0) as http_client:
+                    rest_headers = {"Content-Type": "application/json", "Authorization": f"Bearer {rest_token}"} if rest_token else {}
+                    ccm_url_base = _build_agiloft_url(config.kb_url, config.kb_name, "contract_clause_modification")
+
+                    for clause_num, clause_lib_id in all_clause_ids.items():
+                        if not clause_lib_id:
+                            continue
+
+                        try:
+                            new_id = await _soap_create_ccm(config.kb_url, config.kb_name, soap_session, contract_id_int, int(clause_lib_id))
+                            logger.info(f"SOAP linked {clause_num} (lib_id={clause_lib_id}) to contract {contract_id_int}, CCM id={new_id}")
+
+                            # Populate fields via REST PUT
+                            if rest_token:
+                                try:
+                                    clause_url = _build_agiloft_url(config.kb_url, config.kb_name, f"clause/{int(clause_lib_id)}")
+                                    cr = await http_client.get(clause_url, params={"lang": "en"}, headers=rest_headers)
+                                    clause_text = ""
+                                    if cr.status_code == 200:
+                                        cdata = cr.json().get("result", {})
+                                        if isinstance(cdata, dict):
+                                            raw = cdata.get("clause_text", "")
+                                            clause_text = re.sub(r'<!--.*?-->', '', raw, flags=re.DOTALL).strip()
+
+                                    clause_type = "DFARS" if clause_num.startswith("252") else "FAR"
+                                    put_payload = {"contract_clause_type": clause_type}
+                                    if clause_text:
+                                        put_payload["current_clause_text"] = clause_text
+                                        put_payload["source_text"] = clause_text
+                                        put_payload["accepted_clause_text"] = clause_text
+
+                                    put_url = f"{ccm_url_base}/{new_id}"
+                                    await http_client.put(put_url, params={"lang": "en"}, json=put_payload, headers=rest_headers)
+                                except Exception as e:
+                                    logger.warning(f"REST populate for {clause_num} (CCM {new_id}) failed: {e}")
+
+                            link_results["linked"].append({"number": clause_num, "clause_library_id": int(clause_lib_id), "contract_clause_id": new_id})
+                        except Exception as e:
+                            error_msg = str(e)[:300]
+                            logger.error(f"SOAP error linking {clause_num}: {error_msg}")
+                            link_results["link_failed"].append({"number": clause_num, "error": error_msg})
             except Exception as e:
                 logger.error(f"SOAP linking setup error: {e}")
                 link_results["link_failed"].append({"number": "ALL", "error": f"SOAP setup: {str(e)[:200]}"})
