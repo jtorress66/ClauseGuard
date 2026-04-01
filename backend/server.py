@@ -5607,12 +5607,13 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
             skipped = []
 
             # Try table name variants for the Contract Clauses junction table
-            # Agiloft REST API may use different naming conventions
+            # Agiloft REST API uses the "Logical Table Name" from table settings
             junction_table_names = [
-                "contract_clause",      # snake_case singular
-                "contract_clauses",     # snake_case plural
-                "Contract Clauses",     # Display name with spaces
-                "contract_to_clause",   # DAO-style naming
+                "contract_clause_modification",  # Actual logical table name from Agiloft
+                "contract_clause",
+                "contract_clauses",
+                "Contract Clauses",
+                "contract_to_clause",
             ]
 
             working_table = None
