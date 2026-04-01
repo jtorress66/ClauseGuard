@@ -5617,17 +5617,75 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
             ]
 
             working_table = None
+            known_fields = None
+
+            # First, discover the table's field names by searching for an existing record
+            discovery_table = "contract_clause_modification"
+            discovery_url = _build_agiloft_url(config.kb_url, config.kb_name, f"{discovery_table}/search")
+            try:
+                discovery_resp = await client.post(
+                    discovery_url,
+                    params={"lang": "en"},
+                    json={"search": "", "numberOfRows": 1},
+                    headers=auth_headers
+                )
+                if discovery_resp.status_code == 200:
+                    disc_data = discovery_resp.json()
+                    disc_results = disc_data.get("result", [])
+                    if isinstance(disc_results, list) and disc_results:
+                        known_fields = list(disc_results[0].keys())
+                        logger.info(f"Contract Clauses table fields: {known_fields}")
+                    elif isinstance(disc_results, dict):
+                        known_fields = list(disc_results.keys())
+                        logger.info(f"Contract Clauses table fields: {known_fields}")
+            except Exception as e:
+                logger.warning(f"Field discovery failed: {e}")
+
+            # Determine the clause library linked field name
+            clause_lib_field = None
+            contract_link_field = "contract_id"  # Known from error message
+            title_field = None
+
+            if known_fields:
+                # Find clause library link field
+                for f in known_fields:
+                    f_lower = f.lower()
+                    if "clause_library" in f_lower or ("clause" in f_lower and "library" in f_lower):
+                        clause_lib_field = f
+                        break
+                    if "library" in f_lower and "clause" in f_lower:
+                        clause_lib_field = f
+                        break
+                if not clause_lib_field:
+                    for f in known_fields:
+                        if f.lower() in ("clause_library", "clause", "library_clause"):
+                            clause_lib_field = f
+                            break
+                # Find title field
+                for f in known_fields:
+                    f_lower = f.lower()
+                    if f_lower in ("title", "library_clause_title", "clause_title"):
+                        title_field = f
+                        break
+                # Find contract ID field (verify)
+                for f in known_fields:
+                    if f.lower() in ("contract_id", "contract"):
+                        contract_link_field = f
+                        break
+
+                logger.info(f"Discovered fields - contract: {contract_link_field}, clause_lib: {clause_lib_field}, title: {title_field}")
+                logger.info(f"All fields: {known_fields}")
 
             for idx, (clause_id, clause_num) in enumerate(zip(link_request.clause_ids, link_request.clause_numbers)):
                 clause_title = link_request.clause_titles[idx] if idx < len(link_request.clause_titles) else ""
 
-                # Build the junction record payload
-                # Matches user's Agiloft schema: Contract ID, Clause Library, Title
-                junction_payload = {
-                    "Contract ID": {"id": int(contract_id)},
-                    "Clause Library": {"id": int(clause_id)},
-                    "Title": clause_title or clause_num,
-                }
+                # Build the junction record payload using discovered field names
+                junction_payload = {}
+                junction_payload[contract_link_field] = {"id": int(contract_id)}
+                if clause_lib_field:
+                    junction_payload[clause_lib_field] = {"id": int(clause_id)}
+                if title_field:
+                    junction_payload[title_field] = clause_title or clause_num
 
                 success = False
 
@@ -5685,17 +5743,15 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                                 continue
                             else:
                                 # Table exists but payload may need adjustment
-                                # Try alternative field names
+                                # Try alternative field name combos
                                 alt_payloads = [
                                     {
-                                        "contract_id": {"id": int(contract_id)},
+                                        contract_link_field: {"id": int(contract_id)},
                                         "clause_library": {"id": int(clause_id)},
-                                        "title": clause_title or clause_num,
                                     },
                                     {
-                                        "contract": {"id": int(contract_id)},
+                                        contract_link_field: {"id": int(contract_id)},
                                         "clause": {"id": int(clause_id)},
-                                        "title": clause_title or clause_num,
                                     },
                                 ]
                                 for alt_payload in alt_payloads:
