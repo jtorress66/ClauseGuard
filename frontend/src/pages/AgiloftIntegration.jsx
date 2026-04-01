@@ -1166,14 +1166,11 @@ export default function AgiloftIntegration({ user }) {
                                 {linkResult.message}
                               </span>
                             </div>
-                            {linkResult.method && linkResult.method !== "unknown" && (
-                              <p className="text-xs text-slate-500">Method: {linkResult.method}</p>
+                            {linkResult.working_format && (
+                              <p className="text-xs text-slate-500">Working format: {linkResult.working_format}</p>
                             )}
                             {linkResult.table_used && (
                               <p className="text-xs text-slate-500">Table: {linkResult.table_used}</p>
-                            )}
-                            {linkResult.clause_lib_field && (
-                              <p className="text-xs text-slate-500">Clause Library Field: {linkResult.clause_lib_field}</p>
                             )}
                             {linkResult.linked?.length > 0 && (
                               <div className="mt-2 flex flex-wrap gap-1">
@@ -1187,15 +1184,17 @@ export default function AgiloftIntegration({ user }) {
                                 {linkResult.failed.map((f, i) => (
                                   <p key={i}>{f.error || JSON.stringify(f)}</p>
                                 ))}
-                                {linkResult.failed[0]?.available_fields && (
-                                  <details className="mt-2">
-                                    <summary className="cursor-pointer text-slate-600">Available contract fields</summary>
-                                    <pre className="mt-1 text-xs bg-white p-2 rounded overflow-x-auto">
-                                      {JSON.stringify(linkResult.failed[0].available_fields, null, 2)}
-                                    </pre>
-                                  </details>
-                                )}
                               </div>
+                            )}
+                            {linkResult.sample_existing_record && (
+                              <details className="mt-2">
+                                <summary className="cursor-pointer text-xs text-slate-600 font-medium">
+                                  Existing record field structure (from Agiloft)
+                                </summary>
+                                <pre className="mt-1 text-xs bg-white p-2 rounded overflow-x-auto max-h-60 border">
+                                  {JSON.stringify(linkResult.sample_existing_record, null, 2)}
+                                </pre>
+                              </details>
                             )}
                           </div>
                         )}

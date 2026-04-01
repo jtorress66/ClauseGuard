@@ -5577,12 +5577,8 @@ class LinkClausesRequest(BaseModel):
 
 @agiloft_router.post("/link-clauses-to-contract")
 async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Request):
-    """Link clauses to a contract via contract_clause_modification junction table.
-    
-    Correct payload (confirmed by user):
-      contract_clause_modification_to_contract: {"id": <int>}  -- link object, id only
-      contract_clause_modification_to_clause:   {"id": <int>}  -- link object, id only
-    """
+    """Link clauses to a contract via contract_clause_modification junction table."""
+    import json as _json
     user = await require_auth(request)
     config = link_request.config
     TABLE = "contract_clause_modification"
@@ -5598,30 +5594,117 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
             contract_id_int = int(link_request.contract_id)
             create_url = _build_agiloft_url(config.kb_url, config.kb_name, TABLE)
 
+            # Step 1: Read existing records to discover the exact field format
+            sample_record = None
+            try:
+                search_url = _build_agiloft_url(config.kb_url, config.kb_name, f"{TABLE}/search")
+                sresp = await client.post(search_url, params={"lang": "en"},
+                    json={"search": "", "numberOfRows": 1}, headers=headers)
+                logger.info(f"Discovery search {TABLE}: status={sresp.status_code}")
+                if sresp.status_code == 200:
+                    sdata = sresp.json()
+                    results = sdata.get("result", [])
+                    if isinstance(results, list) and results:
+                        sample_record = results[0]
+                        logger.info(f"Sample record from {TABLE}: {_json.dumps(sample_record, default=str)}")
+                    else:
+                        logger.info(f"No existing records in {TABLE}. Raw response: {sresp.text[:500]}")
+                else:
+                    logger.info(f"Discovery search failed: {sresp.text[:500]}")
+            except Exception as e:
+                logger.warning(f"Discovery error: {e}")
+
+            # Step 2: Try multiple payload formats, starting with the most likely
             linked = []
             failed = []
+            working_format = None
 
-            for i, clause_id in enumerate(link_request.clause_ids):
-                clause_num = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{clause_id}"
+            # Only try first clause with multiple formats
+            first_clause_id = int(link_request.clause_ids[0]) if link_request.clause_ids else None
+            first_clause_num = link_request.clause_numbers[0] if link_request.clause_numbers else None
 
-                payload = {
-                    "contract_clause_modification_to_contract": {"id": contract_id_int},
-                    "contract_clause_modification_to_clause": {"id": int(clause_id)}
-                }
+            if first_clause_id is not None:
+                # Format candidates ordered by likelihood:
+                payload_formats = [
+                    # Format A: Array of link objects (per Agiloft Developer Guide)
+                    {
+                        "name": "array_link",
+                        "payload": {
+                            "contract_clause_modification_to_contract": [{"id": contract_id_int}],
+                            "contract_clause_modification_to_clause": [{"id": first_clause_id}]
+                        }
+                    },
+                    # Format B: Single link object (previous attempt)
+                    {
+                        "name": "single_link",
+                        "payload": {
+                            "contract_clause_modification_to_contract": {"id": contract_id_int},
+                            "contract_clause_modification_to_clause": {"id": first_clause_id}
+                        }
+                    },
+                    # Format C: Plain integer values
+                    {
+                        "name": "plain_int",
+                        "payload": {
+                            "contract_clause_modification_to_contract": contract_id_int,
+                            "contract_clause_modification_to_clause": first_clause_id
+                        }
+                    },
+                ]
 
-                import json as _json
-                logger.info(f"EXACT payload for {clause_num}: {_json.dumps(payload)}")
+                for fmt in payload_formats:
+                    payload = fmt["payload"]
+                    logger.info(f"Trying format '{fmt['name']}' for {first_clause_num}: {_json.dumps(payload)}")
 
-                resp = await client.post(create_url, params={"lang": "en"}, json=payload, headers=headers)
-                logger.info(f"Link response for {clause_num}: {resp.status_code} {resp.text[:500]}")
+                    resp = await client.post(create_url, params={"lang": "en"}, json=payload, headers=headers)
+                    logger.info(f"Format '{fmt['name']}' response: {resp.status_code} {resp.text[:500]}")
 
-                if resp.status_code in [200, 201]:
-                    rd = resp.json() if resp.text else {}
-                    result = rd.get("result", rd)
-                    nid = result.get("id") if isinstance(result, dict) else None
-                    linked.append({"number": clause_num, "clause_library_id": int(clause_id), "contract_clause_id": nid})
+                    if resp.status_code in [200, 201]:
+                        working_format = fmt["name"]
+                        rd = resp.json() if resp.text else {}
+                        result = rd.get("result", rd)
+                        nid = result.get("id") if isinstance(result, dict) else None
+                        linked.append({"number": first_clause_num, "clause_library_id": first_clause_id, "contract_clause_id": nid})
+                        logger.info(f"SUCCESS with format '{working_format}'!")
+                        break
                 else:
-                    failed.append({"number": clause_num, "clause_library_id": int(clause_id), "error": resp.text[:500]})
+                    # All formats failed - collect all errors for diagnosis
+                    failed.append({
+                        "number": first_clause_num,
+                        "error": f"All {len(payload_formats)} payload formats failed. Check backend logs for details.",
+                        "sample_record": sample_record
+                    })
+
+            # Step 3: Process remaining clauses using the working format
+            if working_format and len(link_request.clause_ids) > 1:
+                for i in range(1, len(link_request.clause_ids)):
+                    cid = int(link_request.clause_ids[i])
+                    cnum = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{cid}"
+
+                    if working_format == "array_link":
+                        payload = {
+                            "contract_clause_modification_to_contract": [{"id": contract_id_int}],
+                            "contract_clause_modification_to_clause": [{"id": cid}]
+                        }
+                    elif working_format == "single_link":
+                        payload = {
+                            "contract_clause_modification_to_contract": {"id": contract_id_int},
+                            "contract_clause_modification_to_clause": {"id": cid}
+                        }
+                    else:  # plain_int
+                        payload = {
+                            "contract_clause_modification_to_contract": contract_id_int,
+                            "contract_clause_modification_to_clause": cid
+                        }
+
+                    resp = await client.post(create_url, params={"lang": "en"}, json=payload, headers=headers)
+                    if resp.status_code in [200, 201]:
+                        rd = resp.json() if resp.text else {}
+                        result = rd.get("result", rd)
+                        nid = result.get("id") if isinstance(result, dict) else None
+                        linked.append({"number": cnum, "clause_library_id": cid, "contract_clause_id": nid})
+                    else:
+                        failed.append({"number": cnum, "error": resp.text[:300]})
 
             return {
                 "success": len(linked) > 0,
@@ -5630,7 +5713,9 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                 "linked": linked,
                 "failed": failed,
                 "table_used": TABLE,
-                "message": f"Created {len(linked)} Contract Clause records" if linked else "Failed - check errors",
+                "working_format": working_format,
+                "sample_existing_record": sample_record,
+                "message": f"Created {len(linked)} Contract Clause records (format: {working_format})" if linked else "All payload formats failed - see sample_existing_record for field reference",
             }
 
     except HTTPException:
