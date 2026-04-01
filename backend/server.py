@@ -3773,18 +3773,21 @@ async def _soap_login(kb_url: str, kb_name: str, username: str, password: str) -
                                   headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
 
     # Parse response - extract sessionId or fault
-    resp_text = resp.text
+    resp_text = resp.text.strip()
 
     # Handle MTOM/multipart responses - extract XML portion
-    if resp_text.startswith('--'):
-        # MTOM multipart - find the XML content between boundaries
-        xml_start = resp_text.find('<?xml')
-        if xml_start == -1:
-            xml_start = resp_text.find('<soap:Envelope')
+    if '--uuid:' in resp_text or resp_text.startswith('--'):
+        xml_start = resp_text.find('<soap:Envelope')
         if xml_start == -1:
             xml_start = resp_text.find('<soap-env:Envelope')
         if xml_start >= 0:
-            resp_text = resp_text[xml_start:]
+            xml_end = resp_text.rfind('</soap:Envelope>')
+            if xml_end == -1:
+                xml_end = resp_text.rfind('</soap-env:Envelope>')
+            if xml_end >= 0:
+                resp_text = resp_text[xml_start:xml_end + len('</soap:Envelope>') + 5]
+            else:
+                resp_text = resp_text[xml_start:]
 
     if 'faultstring' in resp_text:
         fault_match = re.search(r'<faultstring>(.*?)</faultstring>', resp_text, re.DOTALL)
@@ -3826,17 +3829,21 @@ async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_
         resp = await client.post(service_url, content=xml_body.encode('utf-8'),
                                   headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
 
-    resp_text = resp.text
+    resp_text = resp.text.strip()
 
     # Handle MTOM/multipart responses
-    if resp_text.startswith('--'):
-        xml_start = resp_text.find('<?xml')
-        if xml_start == -1:
-            xml_start = resp_text.find('<soap:Envelope')
+    if '--uuid:' in resp_text or resp_text.startswith('--'):
+        xml_start = resp_text.find('<soap:Envelope')
         if xml_start == -1:
             xml_start = resp_text.find('<soap-env:Envelope')
         if xml_start >= 0:
-            resp_text = resp_text[xml_start:]
+            xml_end = resp_text.rfind('</soap:Envelope>')
+            if xml_end == -1:
+                xml_end = resp_text.rfind('</soap-env:Envelope>')
+            if xml_end >= 0:
+                resp_text = resp_text[xml_start:xml_end + len('</soap:Envelope>') + 5]
+            else:
+                resp_text = resp_text[xml_start:]
 
     # Check for SOAP fault
     if 'faultstring' in resp_text:
