@@ -3848,37 +3848,53 @@ async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_
 
     new_id = int(id_match.group(1))
 
-    # Step 2: Edit the record to populate text fields via EWEdit
-    if clause_text:
-        try:
-            from xml.sax.saxutils import escape as xml_escape
+    # Step 2: EWUpdate to populate text, type, and re-assert DAO links
+    try:
+        from xml.sax.saxutils import escape as xml_escape
+
+        # Build text fields
+        text_xml = ""
+        if clause_text:
             escaped_text = xml_escape(clause_text)
-            edit_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+            text_xml = f"""
+        <accepted_Clause_Text>{escaped_text}</accepted_Clause_Text>
+        <source_Text>{escaped_text}</source_Text>"""
+
+        # Build type field
+        type_xml = ""
+        if clause_type:
+            type_xml = f"\n        <type>{xml_escape(clause_type)}</type>"
+
+        update_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
   <soapenv:Body>
     <ns:EWUpdate_WSContract_Clause_Modification>
       <sessionId>{session_id}</sessionId>
       <ewwsBaseUserObjectMap>
         <id>{new_id}</id>
-        <accepted_Clause_Text>{escaped_text}</accepted_Clause_Text>
-        <source_Text>{escaped_text}</source_Text>
+        <DAOcontract_Clause_Modification_To_Contract>
+          <entry><key>id</key><value>{contract_id}</value></entry>
+        </DAOcontract_Clause_Modification_To_Contract>
+        <DAOcontract_Clause_Modification_To_Clause>
+          <entry><key>id</key><value>{clause_id}</value></entry>
+        </DAOcontract_Clause_Modification_To_Clause>{text_xml}{type_xml}
       </ewwsBaseUserObjectMap>
     </ns:EWUpdate_WSContract_Clause_Modification>
   </soapenv:Body>
 </soapenv:Envelope>'''
 
-            async with httpx.AsyncClient(timeout=30.0, verify=True) as client:
-                edit_resp = await client.post(service_url, content=edit_xml.encode('utf-8'),
-                                              headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
-            edit_text = edit_resp.text.strip()
-            logger.info(f"SOAP EWUpdate raw response for CCM {new_id} (status={edit_resp.status_code}): {edit_text[:500]}")
-            if 'faultstring' in edit_text:
-                fault = re.search(r'<faultstring>(.*?)</faultstring>', edit_text, re.DOTALL)
-                logger.warning(f"SOAP EWUpdate fault on CCM {new_id}: {fault.group(1)[:200] if fault else edit_text[:200]}")
-            else:
-                logger.info(f"SOAP EWUpdate on CCM {new_id}: text populated ({len(clause_text)} chars)")
-        except Exception as e:
-            logger.warning(f"SOAP EWUpdate failed for CCM {new_id}: {e}")
+        async with httpx.AsyncClient(timeout=30.0, verify=True) as client:
+            edit_resp = await client.post(service_url, content=update_xml.encode('utf-8'),
+                                          headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
+        edit_text = edit_resp.text.strip()
+        logger.info(f"SOAP EWUpdate raw for CCM {new_id} (status={edit_resp.status_code}): {edit_text[:500]}")
+        if 'faultstring' in edit_text:
+            fault = re.search(r'<faultstring>(.*?)</faultstring>', edit_text, re.DOTALL)
+            logger.warning(f"SOAP EWUpdate fault on CCM {new_id}: {fault.group(1)[:200] if fault else edit_text[:200]}")
+        else:
+            logger.info(f"SOAP EWUpdate on CCM {new_id}: all fields populated")
+    except Exception as e:
+        logger.warning(f"SOAP EWUpdate failed for CCM {new_id}: {e}")
 
     return new_id
 
