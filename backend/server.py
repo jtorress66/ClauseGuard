@@ -5577,54 +5577,124 @@ class LinkClausesRequest(BaseModel):
 
 @agiloft_router.post("/link-clauses-to-contract")
 async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Request):
-    """Create contract_clause_modification records linking contract to clause library records.
+    """Link clauses to a contract.
     
-    Payload per record:
-      contract_clause_modification_to_contract: {"id": contract_id}
-      contract_clause_modification_to_clause: {"id": clause_library_id}
+    Strategy:
+    1. Create bare record via new REST API (POST {}) — this works
+    2. Set linked fields via OLD EWEdit endpoint — handles swdao3link natively
+    3. Populate text via new REST API PUT
     """
+    import re
     user = await require_auth(request)
     config = link_request.config
     TABLE = "contract_clause_modification"
 
     try:
         async with httpx.AsyncClient(timeout=300.0) as client:
+            # Auth for new REST API
             login_data = await agiloft_login(client, config)
             token = login_data.get("access_token")
             if not token:
                 raise HTTPException(status_code=401, detail="Authentication failed")
 
             headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
-            create_url = _build_agiloft_url(config.kb_url, config.kb_name, TABLE)
+            rest_url = _build_agiloft_url(config.kb_url, config.kb_name, TABLE)
             contract_id_int = int(link_request.contract_id)
+
+            # Old EW endpoint base URLs
+            ew_edit_url = f"{config.kb_url.rstrip('/')}/ewws/EWEdit"
+            ew_create_url = f"{config.kb_url.rstrip('/')}/ewws/EWCreate"
 
             linked = []
             failed = []
 
             for i, clause_id in enumerate(link_request.clause_ids):
                 clause_num = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{clause_id}"
+                clause_id_int = int(clause_id)
 
-                payload = {
-                    "contract_clause_modification_to_contract": {"id": contract_id_int},
-                    "contract_clause_modification_to_clause": {"id": int(clause_id)}
-                }
+                # Step 1: Create bare record via new REST API
+                create_resp = await client.post(rest_url, params={"lang": "en"}, json={}, headers=headers)
 
-                logger.info(f"Linking {clause_num} (clause_lib={clause_id}) to contract {contract_id_int}")
-
-                resp = await client.post(create_url, params={"lang": "en"}, json=payload, headers=headers)
-                resp_text = resp.text[:500]
-                logger.info(f"Link response for {clause_num}: {resp.status_code} {resp_text}")
-
-                if resp.status_code in [200, 201]:
-                    rd = resp.json() if resp.text else {}
+                new_id = None
+                if create_resp.status_code in [200, 201]:
+                    rd = create_resp.json() if create_resp.text else {}
                     if rd.get("success") is not False:
                         result = rd.get("result")
                         new_id = result if isinstance(result, int) else (result.get("id") if isinstance(result, dict) else None)
-                        linked.append({"number": clause_num, "clause_library_id": int(clause_id), "contract_clause_id": new_id})
-                    else:
-                        failed.append({"number": clause_num, "error": resp_text[:300]})
-                else:
-                    failed.append({"number": clause_num, "error": resp_text[:300]})
+
+                if not new_id:
+                    # Try creating via old EWCreate instead
+                    ew_params = {
+                        "$KB": config.kb_name,
+                        "$table": TABLE,
+                        "$login": config.username,
+                        "$password": config.password,
+                        "$lang": "en",
+                        "contract_clause_modification_to_contract": str(contract_id_int),
+                        "contract_clause_modification_to_clause": str(clause_id_int),
+                        "source": "Added from Library",
+                    }
+                    ew_resp = await client.get(ew_create_url, params=ew_params)
+                    logger.info(f"EWCreate fallback for {clause_num}: {ew_resp.status_code} {ew_resp.text[:300]}")
+
+                    if ew_resp.status_code == 200 and ("id=" in ew_resp.text.lower() or ew_resp.text.strip().isdigit()):
+                        try:
+                            # Try parsing ID from various response formats
+                            txt = ew_resp.text.strip()
+                            if txt.isdigit():
+                                new_id = int(txt)
+                            elif "EWREST_id=" in txt:
+                                for part in txt.split(";"):
+                                    if "EWREST_id=" in part:
+                                        new_id = int(part.split("=")[1].strip("'\""))
+                                        break
+                        except (ValueError, IndexError):
+                            pass
+
+                    if new_id:
+                        linked.append({"number": clause_num, "clause_library_id": clause_id_int, "contract_clause_id": new_id})
+                        continue
+                    elif not new_id and create_resp.status_code not in [200, 201]:
+                        failed.append({"number": clause_num, "error": f"Cannot create: {create_resp.text[:200]}"})
+                        if i == 0:
+                            return {"success": False, "message": "Cannot create records", "failed": failed}
+                        continue
+
+                logger.info(f"Created record {new_id} for {clause_num}, setting linked fields via EWEdit")
+
+                # Step 2: Set linked fields via OLD EWEdit (handles swdao3link)
+                edit_params = {
+                    "$KB": config.kb_name,
+                    "$table": TABLE,
+                    "$login": config.username,
+                    "$password": config.password,
+                    "$lang": "en",
+                    "id": str(new_id),
+                    "contract_clause_modification_to_contract": str(contract_id_int),
+                    "contract_clause_modification_to_clause": str(clause_id_int),
+                    "source": "Added from Library",
+                }
+
+                edit_resp = await client.get(ew_edit_url, params=edit_params)
+                logger.info(f"EWEdit for {clause_num} (record {new_id}): {edit_resp.status_code} {edit_resp.text[:300]}")
+
+                # Step 3: Also fetch and set clause text via REST PUT
+                try:
+                    clause_url = _build_agiloft_url(config.kb_url, config.kb_name, f"clause/{clause_id_int}")
+                    cr = await client.get(clause_url, params={"lang": "en"}, headers=headers)
+                    if cr.status_code == 200:
+                        cdata = cr.json().get("result", {})
+                        raw = cdata.get("clause_text", "") if isinstance(cdata, dict) else ""
+                        clean = re.sub(r'<!--.*?-->', '', raw, flags=re.DOTALL).strip()
+                        if clean:
+                            put_url = f"{rest_url}/{new_id}"
+                            await client.put(put_url, params={"lang": "en"},
+                                json={"clause_text": clean, "accepted_clause_text": clean, "source_text": clean, "source": "Added from Library"},
+                                headers=headers)
+                except Exception as e:
+                    logger.warning(f"Text populate error for {clause_num}: {e}")
+
+                linked.append({"number": clause_num, "clause_library_id": clause_id_int, "contract_clause_id": new_id})
 
             return {
                 "success": len(linked) > 0,
@@ -5633,7 +5703,7 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                 "linked": linked,
                 "failed": failed,
                 "table_used": TABLE,
-                "message": f"Linked {len(linked)} clauses to contract {contract_id_int}" if linked else "Failed - check errors",
+                "message": f"Processed {len(linked)} clauses for contract {contract_id_int}" if linked else "Failed - check errors",
             }
 
     except HTTPException:
