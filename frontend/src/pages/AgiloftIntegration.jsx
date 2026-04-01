@@ -1180,19 +1180,22 @@ export default function AgiloftIntegration({ user }) {
                               </div>
                             )}
                             {linkResult.failed?.length > 0 && (
-                              <div className="mt-2 text-xs text-red-600">
+                              <div className="mt-2 text-xs text-red-600 space-y-1">
                                 {linkResult.failed.map((f, i) => (
-                                  <p key={i}>{f.error || JSON.stringify(f)}</p>
+                                  <div key={i}>
+                                    <p className="font-medium">{f.number} (step: {f.step || "unknown"})</p>
+                                    {f.error && <p>{f.error}</p>}
+                                    {f.error_link_obj && <p>Link obj: {f.error_link_obj}</p>}
+                                    {f.error_str_id && <p>String ID: {f.error_str_id}</p>}
+                                  </div>
                                 ))}
                               </div>
                             )}
-                            {linkResult.sample_existing_record && (
+                            {linkResult.debug_log?.length > 0 && (
                               <details className="mt-2">
-                                <summary className="cursor-pointer text-xs text-slate-600 font-medium">
-                                  Existing record field structure (from Agiloft)
-                                </summary>
-                                <pre className="mt-1 text-xs bg-white p-2 rounded overflow-x-auto max-h-60 border">
-                                  {JSON.stringify(linkResult.sample_existing_record, null, 2)}
+                                <summary className="cursor-pointer text-xs text-slate-600 font-medium">Debug log</summary>
+                                <pre className="mt-1 text-xs bg-white p-2 rounded overflow-x-auto max-h-40 border">
+                                  {linkResult.debug_log.join("\n")}
                                 </pre>
                               </details>
                             )}
