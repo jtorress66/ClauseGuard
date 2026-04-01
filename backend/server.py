@@ -3856,7 +3856,7 @@ async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_
             edit_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
   <soapenv:Body>
-    <ns:EWEdit_WSContract_Clause_Modification>
+    <ns:EWUpdate_WSContract_Clause_Modification>
       <sessionId>{session_id}</sessionId>
       <ewwsBaseUserObjectMap>
         <id>{new_id}</id>
@@ -3864,7 +3864,7 @@ async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_
         <source_text>{escaped_text}</source_text>
         <accepted_clause_text>{escaped_text}</accepted_clause_text>
       </ewwsBaseUserObjectMap>
-    </ns:EWEdit_WSContract_Clause_Modification>
+    </ns:EWUpdate_WSContract_Clause_Modification>
   </soapenv:Body>
 </soapenv:Envelope>'''
 
@@ -3874,11 +3874,11 @@ async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_
             edit_text = edit_resp.text.strip()
             if 'faultstring' in edit_text:
                 fault = re.search(r'<faultstring>(.*?)</faultstring>', edit_text, re.DOTALL)
-                logger.warning(f"SOAP EWEdit fault on CCM {new_id}: {fault.group(1)[:200] if fault else edit_text[:200]}")
+                logger.warning(f"SOAP EWUpdate fault on CCM {new_id}: {fault.group(1)[:200] if fault else edit_text[:200]}")
             else:
-                logger.info(f"SOAP EWEdit on CCM {new_id}: text populated ({len(clause_text)} chars)")
+                logger.info(f"SOAP EWUpdate on CCM {new_id}: text populated ({len(clause_text)} chars)")
         except Exception as e:
-            logger.warning(f"SOAP EWEdit failed for CCM {new_id}: {e}")
+            logger.warning(f"SOAP EWUpdate failed for CCM {new_id}: {e}")
 
     return new_id
 
