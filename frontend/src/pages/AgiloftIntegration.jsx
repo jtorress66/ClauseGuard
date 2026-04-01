@@ -679,6 +679,16 @@ export default function AgiloftIntegration({ user }) {
         };
       });
 
+      // Collect existing clause IDs from the verify results
+      const existingClauseIds = {};
+      if (verificationResult?.found) {
+        for (const f of verificationResult.found) {
+          if (f.agiloft_id) {
+            existingClauseIds[f.number] = f.agiloft_id;
+          }
+        }
+      }
+
       const response = await fetch(`${API}/agiloft/create-missing-and-link`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -687,12 +697,18 @@ export default function AgiloftIntegration({ user }) {
           config,
           contract_id: String(selectedUploadContract?.id || ""),
           clauses: missingClauses,
+          existing_clause_ids: existingClauseIds,
         })
       });
 
       const result = await response.json();
       if (result.success) {
-        toast.success(`Created ${result.created_count} clauses in Agiloft Library`);
+        const msgs = [];
+        if (result.uploaded_count > 0) msgs.push(`Uploaded ${result.uploaded_count} clauses`);
+        if (result.linked_count > 0) msgs.push(`Linked ${result.linked_count} to contract`);
+        if (result.link_failed_count > 0) msgs.push(`${result.link_failed_count} link failures`);
+        toast.success(msgs.join(", ") || "Done");
+        setLinkResult(result);
         // Re-verify to update the found/missing counts
         await verifyClausesInLibrary();
       } else {
@@ -1172,17 +1188,14 @@ export default function AgiloftIntegration({ user }) {
                             {linkResult.table_used && (
                               <p className="text-xs text-slate-500">Table: {linkResult.table_used}</p>
                             )}
-                            {linkResult.writable_fields && (
-                              <details className="mt-1" open>
-                                <summary className="cursor-pointer text-xs text-slate-600 font-medium">Field write test results</summary>
-                                <div className="mt-1 text-xs space-y-0.5">
-                                  {Object.entries(linkResult.writable_fields).map(([field, ok]) => (
-                                    <p key={field} className={ok ? "text-green-600" : "text-red-500"}>
-                                      {ok ? "✓" : "✗"} {field}
-                                    </p>
-                                  ))}
-                                </div>
-                              </details>
+                            {linkResult.uploaded_count > 0 && (
+                              <p className="text-xs text-green-600">Uploaded: {linkResult.uploaded_count} clauses to library</p>
+                            )}
+                            {linkResult.linked_count > 0 && (
+                              <p className="text-xs text-green-600">Linked: {linkResult.linked_count} clauses to contract</p>
+                            )}
+                            {linkResult.link_failed_count > 0 && (
+                              <p className="text-xs text-red-600">Link failures: {linkResult.link_failed_count}</p>
                             )}
                             {linkResult.linked?.length > 0 && (
                               <div className="mt-2 flex flex-wrap gap-1">
