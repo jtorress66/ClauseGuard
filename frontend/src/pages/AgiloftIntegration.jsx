@@ -1172,6 +1172,18 @@ export default function AgiloftIntegration({ user }) {
                             {linkResult.table_used && (
                               <p className="text-xs text-slate-500">Table: {linkResult.table_used}</p>
                             )}
+                            {linkResult.writable_fields && (
+                              <details className="mt-1" open>
+                                <summary className="cursor-pointer text-xs text-slate-600 font-medium">Field write test results</summary>
+                                <div className="mt-1 text-xs space-y-0.5">
+                                  {Object.entries(linkResult.writable_fields).map(([field, ok]) => (
+                                    <p key={field} className={ok ? "text-green-600" : "text-red-500"}>
+                                      {ok ? "✓" : "✗"} {field}
+                                    </p>
+                                  ))}
+                                </div>
+                              </details>
+                            )}
                             {linkResult.linked?.length > 0 && (
                               <div className="mt-2 flex flex-wrap gap-1">
                                 {linkResult.linked.map(c => (

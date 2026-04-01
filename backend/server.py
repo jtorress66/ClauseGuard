@@ -5577,16 +5577,16 @@ class LinkClausesRequest(BaseModel):
 
 @agiloft_router.post("/link-clauses-to-contract")
 async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Request):
-    """Create contract_clause_modification records linked to clause library.
+    """Create contract_clause_modification records and populate writable fields.
     
-    Key findings from Agiloft API testing:
-    - contract_id triggers contract_clause_modification_to_contract (read-only linked field) → ERROR
-    - clause_text with HTML causes "unknown Linked Field object <!--" → ERROR  
-    - clause_id is a simple string field that auto-resolves the clause library link → WORKS
-    - source is a simple string field → WORKS
-    - Empty POST {} creates bare records → WORKS
+    Agiloft REST API restrictions on this junction table:
+    - contract_id → triggers contract linked field → BLOCKED
+    - clause_id → triggers clause linked field → BLOCKED  
+    - clause_text with HTML → "unknown Linked Field object" → BLOCKED
+    - POST {} → creates bare record → WORKS
+    - source field → WORKS
     
-    Strategy: POST with {clause_id, source} only. Agiloft auto-populates text from library.
+    Strategy: POST {} to create, then PUT to set writable text fields.
     """
     import json as _json
     user = await require_auth(request)
@@ -5601,38 +5601,120 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                 raise HTTPException(status_code=401, detail="Authentication failed")
 
             headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
-            create_url = _build_agiloft_url(config.kb_url, config.kb_name, TABLE)
+            base_url = _build_agiloft_url(config.kb_url, config.kb_name, TABLE)
 
-            linked = []
+            # Step 1: Fetch clause details from Agiloft Library for populating text
+            clause_details = {}
+            for clause_id in link_request.clause_ids:
+                try:
+                    clause_url = _build_agiloft_url(config.kb_url, config.kb_name, f"clause/{int(clause_id)}")
+                    cr = await client.get(clause_url, params={"lang": "en"}, headers=headers)
+                    if cr.status_code == 200:
+                        cdata = cr.json().get("result", {})
+                        if isinstance(cdata, dict):
+                            clause_details[int(clause_id)] = cdata
+                except Exception:
+                    pass
+
+            # Step 2: Create one test record and discover which fields are writable via PUT
+            test_resp = await client.post(base_url, params={"lang": "en"}, json={}, headers=headers)
+            if test_resp.status_code not in [200, 201] or test_resp.json().get("success") is False:
+                return {"success": False, "message": f"Cannot create records: {test_resp.text[:300]}"}
+
+            test_id = test_resp.json().get("result")
+            if not isinstance(test_id, int):
+                test_id = test_resp.json().get("result", {}).get("id")
+
+            first_clause_id = int(link_request.clause_ids[0])
+            first_detail = clause_details.get(first_clause_id, {})
+            first_title = first_detail.get("clause_title", link_request.clause_numbers[0])
+            # Strip HTML from clause text for safe transmission
+            raw_text = first_detail.get("clause_text", "")
+            from html import unescape
+            import re
+            plain_text = unescape(re.sub(r'<[^>]+>', ' ', raw_text)).strip()
+            plain_text = re.sub(r'\s+', ' ', plain_text)[:5000]  # Limit size
+
+            # Test individual fields via PUT
+            writable_fields = {}
+            test_fields = [
+                ("clause_title", first_title),
+                ("source", "Added from Library"),
+                ("clause_type", first_detail.get("clause_type", "FAR")),
+                ("accepted_clause_text", plain_text[:2000] if plain_text else ""),
+                ("source_text", plain_text[:2000] if plain_text else ""),
+                ("clause_text", plain_text[:2000] if plain_text else ""),
+            ]
+
+            for field_name, field_value in test_fields:
+                if not field_value:
+                    continue
+                try:
+                    put_url = f"{base_url}/{test_id}"
+                    pr = await client.put(put_url, params={"lang": "en"},
+                        json={field_name: field_value}, headers=headers)
+                    success = pr.status_code in [200, 201] and pr.json().get("success") is not False
+                    writable_fields[field_name] = success
+                    logger.info(f"PUT test field '{field_name}' on {test_id}: {'OK' if success else 'FAIL'} {pr.text[:200]}")
+                except Exception as e:
+                    writable_fields[field_name] = False
+                    logger.warning(f"PUT test field '{field_name}' error: {e}")
+
+            working_fields = [f for f, ok in writable_fields.items() if ok]
+            logger.info(f"Writable fields: {working_fields}")
+
+            # Record test_id as first linked
+            linked = [{"number": link_request.clause_numbers[0], "clause_library_id": first_clause_id, "contract_clause_id": test_id}]
             failed = []
 
-            for i, clause_id in enumerate(link_request.clause_ids):
-                clause_num = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{clause_id}"
+            # Step 3: Create remaining records and populate with working fields
+            for i in range(1, len(link_request.clause_ids)):
+                cid = int(link_request.clause_ids[i])
+                cnum = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{cid}"
+                detail = clause_details.get(cid, {})
 
-                # Only set clause_id and source — Agiloft resolves text from library
-                payload = {
-                    "clause_id": str(int(clause_id)),
-                    "source": "Added from Library",
-                }
+                # Create bare record
+                cr = await client.post(base_url, params={"lang": "en"}, json={}, headers=headers)
+                if cr.status_code not in [200, 201]:
+                    failed.append({"number": cnum, "error": cr.text[:200]})
+                    continue
 
-                resp = await client.post(create_url, params={"lang": "en"}, json=payload, headers=headers)
+                rd = cr.json() if cr.text else {}
+                if rd.get("success") is False:
+                    failed.append({"number": cnum, "error": cr.text[:200]})
+                    continue
 
-                if resp.status_code in [200, 201]:
-                    rd = resp.json() if resp.text else {}
-                    if rd.get("success") is not False:
-                        result = rd.get("result")
-                        new_id = result if isinstance(result, int) else (result.get("id") if isinstance(result, dict) else None)
-                        linked.append({"number": clause_num, "clause_library_id": int(clause_id), "contract_clause_id": new_id})
-                    else:
-                        err = resp.text[:300]
-                        logger.info(f"clause_id POST failed for {clause_num}: {err}")
-                        failed.append({"number": clause_num, "error": err})
-                else:
-                    failed.append({"number": clause_num, "error": resp.text[:300]})
+                new_id = rd.get("result")
+                if not isinstance(new_id, int):
+                    new_id = rd.get("result", {}).get("id") if isinstance(rd.get("result"), dict) else None
 
-                # Log first result for debugging
-                if i == 0:
-                    logger.info(f"First clause {clause_num}: status={resp.status_code} body={resp.text[:500]}")
+                if not new_id:
+                    failed.append({"number": cnum, "error": "No ID returned"})
+                    continue
+
+                # Populate with writable fields
+                if working_fields:
+                    raw = detail.get("clause_text", "")
+                    pt = unescape(re.sub(r'<[^>]+>', ' ', raw)).strip()
+                    pt = re.sub(r'\s+', ' ', pt)[:5000]
+
+                    update_data = {}
+                    for f in working_fields:
+                        if f == "clause_title":
+                            update_data[f] = detail.get("clause_title", cnum)
+                        elif f == "source":
+                            update_data[f] = "Added from Library"
+                        elif f == "clause_type":
+                            update_data[f] = detail.get("clause_type", "FAR" if cnum.startswith("52.") else "DFARS")
+                        elif f in ("accepted_clause_text", "source_text", "clause_text"):
+                            if pt:
+                                update_data[f] = pt[:2000]
+
+                    if update_data:
+                        await client.put(f"{base_url}/{new_id}", params={"lang": "en"},
+                            json=update_data, headers=headers)
+
+                linked.append({"number": cnum, "clause_library_id": cid, "contract_clause_id": new_id})
 
             return {
                 "success": len(linked) > 0,
@@ -5641,7 +5723,8 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                 "linked": linked,
                 "failed": failed,
                 "table_used": TABLE,
-                "message": f"Created {len(linked)} Contract Clause records" if linked else "Failed - check errors",
+                "writable_fields": writable_fields,
+                "message": f"Created {len(linked)} records (writable fields: {', '.join(working_fields) or 'none'})",
             }
 
     except HTTPException:
