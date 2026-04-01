@@ -3802,11 +3802,20 @@ async def _soap_login(kb_url: str, kb_name: str, username: str, password: str) -
     logger.info(f"SOAP login successful, session: {session_id[:20]}...")
     return session_id
 
-async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_id: int, clause_id: int) -> int:
+async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_id: int, clause_id: int, clause_text: str = "", clause_type: str = "") -> int:
     """Create a contract_clause_modification record via raw SOAP XML.
-    Only sends the two required linked fields (Contract + Clause) — nothing else."""
+    Sets linked fields (Contract + Clause) and optional text/metadata."""
     service_url = _build_soap_url(kb_url, kb_name)
     ns = _build_soap_ns(kb_name)
+
+    # Build optional field XML elements
+    extra_fields = ""
+    if clause_text:
+        from xml.sax.saxutils import escape as xml_escape
+        escaped_text = xml_escape(clause_text)
+        extra_fields += f"\n        <current_clause_text>{escaped_text}</current_clause_text>"
+        extra_fields += f"\n        <source_text>{escaped_text}</source_text>"
+        extra_fields += f"\n        <accepted_clause_text>{escaped_text}</accepted_clause_text>"
 
     xml_body = f'''<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
@@ -3819,7 +3828,7 @@ async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_
         </DAOcontract_Clause_Modification_To_Contract>
         <DAOcontract_Clause_Modification_To_Clause>
           <entry><key>id</key><value>{clause_id}</value></entry>
-        </DAOcontract_Clause_Modification_To_Clause>
+        </DAOcontract_Clause_Modification_To_Clause>{extra_fields}
       </ewwsBaseUserObjectMap>
     </ns:EWCreate_WSContract_Clause_Modification>
   </soapenv:Body>
@@ -5733,40 +5742,25 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                 clause_id_int = int(clause_id)
 
                 try:
-                    # Step 1: Create junction record via SOAP (sets linked fields)
-                    new_id = await _soap_create_ccm(config.kb_url, config.kb_name, session_id, contract_id_int, clause_id_int)
-                    logger.info(f"SOAP created CCM record {new_id} linking clause {clause_num} (lib_id={clause_id_int}) to contract {contract_id_int}")
-
-                    # Step 2: Populate text/metadata via REST PUT
+                    # Fetch clause text from Agiloft Clause Library via REST
+                    clause_text = ""
                     if rest_token:
                         try:
-                            # Fetch clause text from Agiloft Clause Library
                             clause_url = _build_agiloft_url(config.kb_url, config.kb_name, f"clause/{clause_id_int}")
                             cr = await http_client.get(clause_url, params={"lang": "en"}, headers=rest_headers)
-                            clause_text = ""
-                            clause_title = ""
                             if cr.status_code == 200:
                                 cdata = cr.json().get("result", {})
                                 if isinstance(cdata, dict):
                                     raw = cdata.get("clause_text", "")
                                     clause_text = re.sub(r'<!--.*?-->', '', raw, flags=re.DOTALL).strip()
-                                    clause_title = cdata.get("clause_title", "")
-
-                            clause_type = "DFARS" if clause_num.startswith("252") else "FAR"
-                            put_payload = {
-                                "contract_clause_type": clause_type,
-                            }
-                            if clause_text:
-                                put_payload["current_clause_text"] = clause_text
-                                put_payload["source_text"] = clause_text
-                                put_payload["accepted_clause_text"] = clause_text
-
-                            put_url = f"{ccm_url_base}/{new_id}"
-                            pr = await http_client.put(put_url, params={"lang": "en"}, json=put_payload, headers=rest_headers)
-                            logger.info(f"REST PUT on CCM {new_id} for {clause_num}: {pr.status_code}")
                         except Exception as e:
-                            logger.warning(f"REST populate for {clause_num} (CCM {new_id}) failed (non-fatal): {e}")
+                            logger.warning(f"Could not fetch clause text for {clause_num}: {e}")
 
+                    clause_type = "DFARS" if clause_num.startswith("252") else "FAR"
+
+                    # SOAP create with text included
+                    new_id = await _soap_create_ccm(config.kb_url, config.kb_name, session_id, contract_id_int, clause_id_int, clause_text=clause_text, clause_type=clause_type)
+                    logger.info(f"SOAP created CCM record {new_id} for {clause_num} (text_len={len(clause_text)})")
                     linked.append({"number": clause_num, "clause_library_id": clause_id_int, "contract_clause_id": new_id})
                 except Exception as e:
                     error_msg = str(e)[:300]
@@ -5903,32 +5897,23 @@ async def create_missing_and_link(create_request: CreateAndLinkRequest, request:
                             continue
 
                         try:
-                            new_id = await _soap_create_ccm(config.kb_url, config.kb_name, soap_session, contract_id_int, int(clause_lib_id))
-                            logger.info(f"SOAP linked {clause_num} (lib_id={clause_lib_id}) to contract {contract_id_int}, CCM id={new_id}")
-
-                            # Populate fields via REST PUT
+                            # Fetch clause text from Agiloft Clause Library
+                            clause_text = ""
                             if rest_token:
                                 try:
                                     clause_url = _build_agiloft_url(config.kb_url, config.kb_name, f"clause/{int(clause_lib_id)}")
                                     cr = await http_client.get(clause_url, params={"lang": "en"}, headers=rest_headers)
-                                    clause_text = ""
                                     if cr.status_code == 200:
                                         cdata = cr.json().get("result", {})
                                         if isinstance(cdata, dict):
                                             raw = cdata.get("clause_text", "")
                                             clause_text = re.sub(r'<!--.*?-->', '', raw, flags=re.DOTALL).strip()
+                                except Exception:
+                                    pass
 
-                                    clause_type = "DFARS" if clause_num.startswith("252") else "FAR"
-                                    put_payload = {"contract_clause_type": clause_type}
-                                    if clause_text:
-                                        put_payload["current_clause_text"] = clause_text
-                                        put_payload["source_text"] = clause_text
-                                        put_payload["accepted_clause_text"] = clause_text
-
-                                    put_url = f"{ccm_url_base}/{new_id}"
-                                    await http_client.put(put_url, params={"lang": "en"}, json=put_payload, headers=rest_headers)
-                                except Exception as e:
-                                    logger.warning(f"REST populate for {clause_num} (CCM {new_id}) failed: {e}")
+                            clause_type = "DFARS" if clause_num.startswith("252") else "FAR"
+                            new_id = await _soap_create_ccm(config.kb_url, config.kb_name, soap_session, contract_id_int, int(clause_lib_id), clause_text=clause_text, clause_type=clause_type)
+                            logger.info(f"SOAP linked {clause_num} (lib_id={clause_lib_id}) to contract {contract_id_int}, CCM id={new_id}")
 
                             link_results["linked"].append({"number": clause_num, "clause_library_id": int(clause_lib_id), "contract_clause_id": new_id})
                         except Exception as e:
