@@ -1169,6 +1169,12 @@ export default function AgiloftIntegration({ user }) {
                             {linkResult.method && linkResult.method !== "unknown" && (
                               <p className="text-xs text-slate-500">Method: {linkResult.method}</p>
                             )}
+                            {linkResult.table_used && (
+                              <p className="text-xs text-slate-500">Table: {linkResult.table_used}</p>
+                            )}
+                            {linkResult.clause_lib_field && (
+                              <p className="text-xs text-slate-500">Clause Library Field: {linkResult.clause_lib_field}</p>
+                            )}
                             {linkResult.linked?.length > 0 && (
                               <div className="mt-2 flex flex-wrap gap-1">
                                 {linkResult.linked.map(c => (
