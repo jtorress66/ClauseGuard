@@ -5579,8 +5579,8 @@ class LinkClausesRequest(BaseModel):
 async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Request):
     """Link clauses to a contract via contract_clause_modification junction table.
     
-    Agiloft swdao3link fields cannot be set during POST creation.
-    Workaround: 1) Create bare record, 2) PUT to set linked fields.
+    Strategy: First fetch an existing record to discover all writable fields,
+    then create records using the correct field names.
     """
     import json as _json
     user = await require_auth(request)
@@ -5598,78 +5598,152 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
             contract_id_int = int(link_request.contract_id)
             base_url = _build_agiloft_url(config.kb_url, config.kb_name, TABLE)
 
+            # Step 0: Fetch an existing record by ID to discover all fields
+            sample_full = None
+            try:
+                search_url = _build_agiloft_url(config.kb_url, config.kb_name, f"{TABLE}/search")
+                sresp = await client.post(search_url, params={"lang": "en"},
+                    json={"search": "", "numberOfRows": 5}, headers=headers)
+                if sresp.status_code == 200:
+                    sdata = sresp.json().get("result", [])
+                    if isinstance(sdata, list) and sdata:
+                        # Fetch the first record by ID to get ALL fields
+                        rec_id = sdata[0].get("id") if isinstance(sdata[0], dict) else sdata[0]
+                        get_url = f"{base_url}/{rec_id}"
+                        gresp = await client.get(get_url, params={"lang": "en"}, headers=headers)
+                        logger.info(f"GET {TABLE}/{rec_id}: {gresp.status_code} {gresp.text[:1000]}")
+                        if gresp.status_code == 200:
+                            gdata = gresp.json()
+                            sample_full = gdata.get("result", gdata)
+                            logger.info(f"Full record {rec_id} fields: {_json.dumps(sample_full, default=str)}")
+            except Exception as e:
+                logger.warning(f"Discovery error: {e}")
+
             linked = []
             failed = []
-            debug_log = []
 
-            for i, clause_id in enumerate(link_request.clause_ids):
-                clause_num = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{clause_id}"
-                clause_id_int = int(clause_id)
+            # Create and link each clause - try ONLY with first clause first
+            first_clause_id = int(link_request.clause_ids[0]) if link_request.clause_ids else None
+            first_clause_num = link_request.clause_numbers[0] if link_request.clause_numbers else None
 
-                # Step 1: Create a bare junction record
-                logger.info(f"Step 1 - Creating bare record for {clause_num}")
-                create_resp = await client.post(base_url, params={"lang": "en"}, json={}, headers=headers)
-                logger.info(f"Step 1 response: {create_resp.status_code} {create_resp.text[:500]}")
+            if first_clause_id is None:
+                return {"success": False, "message": "No clause IDs provided"}
 
-                if create_resp.status_code not in [200, 201]:
-                    failed.append({"number": clause_num, "step": "create", "error": create_resp.text[:300]})
-                    debug_log.append(f"CREATE failed for {clause_num}: {create_resp.text[:200]}")
-                    continue
-
-                # Extract new record ID - Agiloft returns {"result": 6312} (plain int)
-                create_data = create_resp.json() if create_resp.text else {}
-                result = create_data.get("result")
-                if isinstance(result, int):
-                    new_id = result
-                elif isinstance(result, dict):
-                    new_id = result.get("id")
-                else:
-                    new_id = None
-
-                if not new_id:
-                    failed.append({"number": clause_num, "step": "create", "error": f"No ID in response: {create_resp.text[:200]}"})
-                    continue
-
-                logger.info(f"Created bare record id={new_id} for {clause_num}")
-
-                # Step 2: Update the record to set linked fields
-                update_url = f"{base_url}/{new_id}"
-                update_payload = {
-                    "contract_clause_modification_to_contract": {"id": contract_id_int},
-                    "contract_clause_modification_to_clause": {"id": clause_id_int}
-                }
-                logger.info(f"Step 2 - Updating record {new_id}: {_json.dumps(update_payload)}")
-                update_resp = await client.put(update_url, params={"lang": "en"}, json=update_payload, headers=headers)
-                logger.info(f"Step 2 response: {update_resp.status_code} {update_resp.text[:500]}")
-
-                if update_resp.status_code in [200, 201]:
-                    linked.append({"number": clause_num, "clause_library_id": clause_id_int, "contract_clause_id": new_id})
-                else:
-                    # PUT with link objects failed, try with plain string IDs
-                    update_payload_str = {
-                        "contract_clause_modification_to_contract": str(contract_id_int),
-                        "contract_clause_modification_to_clause": str(clause_id_int)
+            # Try multiple payload strategies for the first clause
+            strategies = [
+                {
+                    "name": "contract_id_plain_with_clause_link",
+                    "payload": {
+                        "contract_id": contract_id_int,
+                        "contract_clause_modification_to_clause": [{"id": first_clause_id}]
                     }
-                    logger.info(f"Step 2b - Retry with string IDs: {_json.dumps(update_payload_str)}")
-                    update_resp2 = await client.put(update_url, params={"lang": "en"}, json=update_payload_str, headers=headers)
-                    logger.info(f"Step 2b response: {update_resp2.status_code} {update_resp2.text[:500]}")
+                },
+                {
+                    "name": "contract_id_plain_with_clause_single",
+                    "payload": {
+                        "contract_id": contract_id_int,
+                        "contract_clause_modification_to_clause": {"id": first_clause_id}
+                    }
+                },
+                {
+                    "name": "contract_id_str_with_clause_str",
+                    "payload": {
+                        "contract_id": str(contract_id_int),
+                        "contract_clause_modification_to_clause": str(first_clause_id)
+                    }
+                },
+                {
+                    "name": "both_links",
+                    "payload": {
+                        "contract_clause_modification_to_contract": [{"id": contract_id_int}],
+                        "contract_clause_modification_to_clause": [{"id": first_clause_id}]
+                    }
+                },
+            ]
 
-                    if update_resp2.status_code in [200, 201]:
-                        linked.append({"number": clause_num, "clause_library_id": clause_id_int, "contract_clause_id": new_id})
-                    else:
-                        failed.append({
-                            "number": clause_num,
-                            "step": "update",
-                            "record_id": new_id,
-                            "error_link_obj": update_resp.text[:200],
-                            "error_str_id": update_resp2.text[:200]
-                        })
-                        debug_log.append(f"UPDATE failed for {clause_num} (record {new_id})")
+            working_strategy = None
 
-                # Only process first clause for initial testing
-                if i == 0 and not linked:
-                    logger.info("First clause failed - stopping to avoid creating orphan records")
+            for strat in strategies:
+                payload = strat["payload"]
+                logger.info(f"Strategy '{strat['name']}' for {first_clause_num}: {_json.dumps(payload)}")
+
+                resp = await client.post(base_url, params={"lang": "en"}, json=payload, headers=headers)
+                resp_text = resp.text[:500]
+                logger.info(f"Strategy '{strat['name']}' response: {resp.status_code} {resp_text}")
+
+                # Check BOTH HTTP status and response body success flag
+                resp_ok = False
+                new_id = None
+                if resp.status_code in [200, 201]:
+                    try:
+                        rd = resp.json()
+                        if rd.get("success") is True or rd.get("success") is None:
+                            result = rd.get("result")
+                            new_id = result if isinstance(result, int) else (result.get("id") if isinstance(result, dict) else None)
+                            if new_id:
+                                # Verify the record actually has data by fetching it back
+                                verify_url = f"{base_url}/{new_id}"
+                                vr = await client.get(verify_url, params={"lang": "en"}, headers=headers)
+                                if vr.status_code == 200:
+                                    vdata = vr.json().get("result", {})
+                                    logger.info(f"Verify record {new_id}: {_json.dumps(vdata, default=str)[:500]}")
+                                    # Check if contract_id or linked fields are populated
+                                    has_data = any(k for k in (vdata if isinstance(vdata, dict) else {}) 
+                                                   if k not in ("id", "creator_login", "type") and vdata.get(k))
+                                    if has_data:
+                                        resp_ok = True
+                                    else:
+                                        logger.info(f"Record {new_id} created but empty - strategy '{strat['name']}' didn't set fields")
+                                        resp_ok = False
+                                else:
+                                    resp_ok = True  # Created but can't verify
+                        else:
+                            logger.info(f"Strategy '{strat['name']}' response success=false: {resp_text}")
+                    except Exception as e:
+                        logger.warning(f"Error parsing response: {e}")
+
+                if resp_ok and new_id:
+                    working_strategy = strat["name"]
+                    linked.append({"number": first_clause_num, "clause_library_id": first_clause_id, "contract_clause_id": new_id})
+                    logger.info(f"SUCCESS with strategy '{working_strategy}'!")
                     break
+
+            if not working_strategy:
+                return {
+                    "success": False,
+                    "message": "All strategies failed. See sample_full_record for field reference.",
+                    "table_used": TABLE,
+                    "failed": [{"number": first_clause_num, "error": "All payload strategies failed"}],
+                    "sample_full_record": sample_full,
+                    "strategies_tried": [s["name"] for s in strategies],
+                }
+
+            # Process remaining clauses with the working strategy
+            for i in range(1, len(link_request.clause_ids)):
+                cid = int(link_request.clause_ids[i])
+                cnum = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{cid}"
+
+                # Rebuild payload with the working strategy pattern
+                if working_strategy == "contract_id_plain_with_clause_link":
+                    payload = {"contract_id": contract_id_int, "contract_clause_modification_to_clause": [{"id": cid}]}
+                elif working_strategy == "contract_id_plain_with_clause_single":
+                    payload = {"contract_id": contract_id_int, "contract_clause_modification_to_clause": {"id": cid}}
+                elif working_strategy == "contract_id_str_with_clause_str":
+                    payload = {"contract_id": str(contract_id_int), "contract_clause_modification_to_clause": str(cid)}
+                else:
+                    payload = {"contract_clause_modification_to_contract": [{"id": contract_id_int}], "contract_clause_modification_to_clause": [{"id": cid}]}
+
+                resp = await client.post(base_url, params={"lang": "en"}, json=payload, headers=headers)
+                if resp.status_code in [200, 201]:
+                    rd = resp.json() if resp.text else {}
+                    result = rd.get("result")
+                    new_id = result if isinstance(result, int) else (result.get("id") if isinstance(result, dict) else None)
+                    if new_id and rd.get("success") is not False:
+                        linked.append({"number": cnum, "clause_library_id": cid, "contract_clause_id": new_id})
+                    else:
+                        failed.append({"number": cnum, "error": resp.text[:200]})
+                else:
+                    failed.append({"number": cnum, "error": resp.text[:200]})
 
             return {
                 "success": len(linked) > 0,
@@ -5678,8 +5752,9 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                 "linked": linked,
                 "failed": failed,
                 "table_used": TABLE,
-                "debug_log": debug_log,
-                "message": f"Created {len(linked)} Contract Clause records" if linked else "Failed - check errors",
+                "working_strategy": working_strategy,
+                "sample_full_record": sample_full,
+                "message": f"Created {len(linked)} Contract Clause records (strategy: {working_strategy})" if linked else "Failed - check errors",
             }
 
     except HTTPException:

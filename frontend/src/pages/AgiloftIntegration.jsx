@@ -1166,8 +1166,8 @@ export default function AgiloftIntegration({ user }) {
                                 {linkResult.message}
                               </span>
                             </div>
-                            {linkResult.working_format && (
-                              <p className="text-xs text-slate-500">Working format: {linkResult.working_format}</p>
+                            {linkResult.working_strategy && (
+                              <p className="text-xs text-slate-500">Strategy: {linkResult.working_strategy}</p>
                             )}
                             {linkResult.table_used && (
                               <p className="text-xs text-slate-500">Table: {linkResult.table_used}</p>
@@ -1182,20 +1182,20 @@ export default function AgiloftIntegration({ user }) {
                             {linkResult.failed?.length > 0 && (
                               <div className="mt-2 text-xs text-red-600 space-y-1">
                                 {linkResult.failed.map((f, i) => (
-                                  <div key={i}>
-                                    <p className="font-medium">{f.number} (step: {f.step || "unknown"})</p>
-                                    {f.error && <p>{f.error}</p>}
-                                    {f.error_link_obj && <p>Link obj: {f.error_link_obj}</p>}
-                                    {f.error_str_id && <p>String ID: {f.error_str_id}</p>}
-                                  </div>
+                                  <p key={i}>{f.number}: {f.error || JSON.stringify(f)}</p>
                                 ))}
                               </div>
                             )}
-                            {linkResult.debug_log?.length > 0 && (
-                              <details className="mt-2">
-                                <summary className="cursor-pointer text-xs text-slate-600 font-medium">Debug log</summary>
-                                <pre className="mt-1 text-xs bg-white p-2 rounded overflow-x-auto max-h-40 border">
-                                  {linkResult.debug_log.join("\n")}
+                            {linkResult.strategies_tried && (
+                              <p className="text-xs text-slate-500 mt-1">Tried: {linkResult.strategies_tried.join(", ")}</p>
+                            )}
+                            {linkResult.sample_full_record && (
+                              <details className="mt-2" open>
+                                <summary className="cursor-pointer text-xs text-slate-600 font-medium">
+                                  Full record structure from Agiloft (all fields)
+                                </summary>
+                                <pre className="mt-1 text-xs bg-white p-2 rounded overflow-x-auto max-h-80 border">
+                                  {JSON.stringify(linkResult.sample_full_record, null, 2)}
                                 </pre>
                               </details>
                             )}
