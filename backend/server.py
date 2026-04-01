@@ -3744,12 +3744,14 @@ from zeep import Settings as ZeepSettings
 _soap_client_cache = {}
 
 def _get_soap_client(kb_url: str, kb_name: str):
-    """Get or create a zeep SOAP client for the Agiloft instance."""
-    cache_key = f"{kb_url}:{kb_name}"
+    """Get or create a zeep SOAP client for the Agiloft instance.
+    Note: The WSDL path requires the lowercase KB name."""
+    kb_name_lower = kb_name.lower()
+    cache_key = f"{kb_url}:{kb_name_lower}"
     if cache_key not in _soap_client_cache:
         base = _norm_agiloft_base(kb_url)
-        wsdl = f"{base}/ewws/{kb_name}/EWWSv2Service?wsdl"
-        service_url = f"{base}/ewws/{kb_name}/EWWSv2Service"
+        wsdl = f"{base}/ewws/{kb_name_lower}/EWWSv2Service?wsdl"
+        service_url = f"{base}/ewws/{kb_name_lower}/EWWSv2Service"
         settings = ZeepSettings(strict=False, xml_huge_tree=True)
         soap_client = zeep.Client(wsdl, settings=settings)
         soap_client.service._binding_options['address'] = service_url
@@ -3772,7 +3774,8 @@ def _soap_login(soap_client, kb_name: str, username: str, password: str) -> str:
 def _soap_create_ccm(soap_client, session_id: str, contract_id: int, clause_id: int, kb_name: str) -> int:
     """Create a contract_clause_modification record via SOAP, linking clause to contract.
     Returns the new record ID."""
-    ns = f'http://{kb_name}.api.ws.enterprisewizard.com'
+    kb_name_lower = kb_name.lower()
+    ns = f'http://{kb_name_lower}.api.ws.enterprisewizard.com'
     CCM = soap_client.get_type(f'{{{ns}}}WSContract_Clause_Modification')
 
     EMPTY_DAO = {'entry': []}
