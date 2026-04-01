@@ -3860,9 +3860,8 @@ async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_
       <sessionId>{session_id}</sessionId>
       <ewwsBaseUserObjectMap>
         <id>{new_id}</id>
-        <current_clause_text>{escaped_text}</current_clause_text>
-        <source_text>{escaped_text}</source_text>
-        <accepted_clause_text>{escaped_text}</accepted_clause_text>
+        <accepted_Clause_Text>{escaped_text}</accepted_Clause_Text>
+        <source_Text>{escaped_text}</source_Text>
       </ewwsBaseUserObjectMap>
     </ns:EWUpdate_WSContract_Clause_Modification>
   </soapenv:Body>
@@ -3872,6 +3871,7 @@ async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_
                 edit_resp = await client.post(service_url, content=edit_xml.encode('utf-8'),
                                               headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
             edit_text = edit_resp.text.strip()
+            logger.info(f"SOAP EWUpdate raw response for CCM {new_id} (status={edit_resp.status_code}): {edit_text[:500]}")
             if 'faultstring' in edit_text:
                 fault = re.search(r'<faultstring>(.*?)</faultstring>', edit_text, re.DOTALL)
                 logger.warning(f"SOAP EWUpdate fault on CCM {new_id}: {fault.group(1)[:200] if fault else edit_text[:200]}")
