@@ -3860,10 +3860,8 @@ async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_
         <accepted_Clause_Text>{escaped_text}</accepted_Clause_Text>
         <source_Text>{escaped_text}</source_Text>"""
 
-        # Build type field
+        # Build type field - skip for now, 'type' is a subtype field with restricted values
         type_xml = ""
-        if clause_type:
-            type_xml = f"\n        <type>{xml_escape(clause_type)}</type>"
 
         update_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
