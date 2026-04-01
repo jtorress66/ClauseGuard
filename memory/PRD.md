@@ -131,7 +131,7 @@ Build a Federal Clause Management app that helps government contractors manage F
 - **Database**: MongoDB
 - **AI**: OpenAI GPT-5.2 via Emergent LLM Key
 - **Auth**: Custom JWT-based email/password
-- **External**: acquisition.gov, Agiloft REST API
+- **External**: acquisition.gov, Agiloft REST API + SOAP API (zeep for junction table writes)
 
 ## Key Technical Details
 
@@ -152,6 +152,7 @@ Build a Federal Clause Management app that helps government contractors manage F
 - Level 4: `padding-left: 6.1em` - (A), (B), (C)...
 
 ## Change Log
+- **2026-04-01 (Session 9)**: P0 - Migrated Agiloft clause-to-contract linking from REST API to SOAP API (zeep). REST API structurally rejects writes to swdao3link junction table fields. SOAP implementation uses `EWCreate_WSContract_Clause_Modification` with `DAOcontract_Clause_Modification_To_Contract` and `DAOcontract_Clause_Modification_To_Clause` entry maps. Updated both `link-clauses-to-contract` and `create-missing-and-link` endpoints. All 12 backend tests pass.
 - **2025-04-01 (Session 7)**: Fixed P0 Agiloft junction table payload. Changed field `contract_clause_modification_to_contract: {"id": int}` to `contract_id: int` (plain integer), and locked in `contract_clause_modification_to_clause: {"id": int}` as the clause link field. Removed dynamic field discovery/fallback logic.
 - **2025-03-30 (Session 5 continued)**: 
   - Fixed P0 bug - "Generate Checklist" feature failing with ObjectId serialization error. Root cause: MongoDB `insert_one()` mutates dict adding `_id` (ObjectId). Fix: Added `checklist_dict.pop("_id", None)` before return.
