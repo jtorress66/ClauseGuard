@@ -45,7 +45,8 @@ Build a Federal Clause Management app that helps government contractors manage F
   - Left panel: Search/select Agiloft contracts
   - Right panel: 3-step wizard (Upload → Verify in Library → Link to Contract)
   - Verify which extracted clauses already exist in Agiloft Clause Library
-  - Link existing library clauses to the selected Agiloft contract
+  - Links clauses by creating records in the "Contract Clauses" junction table (not by modifying the contract directly)
+  - Junction payload: `{"Contract ID": {"id": contract_id}, "Clause Library": {"id": clause_library_id}, "Title": title}`
   - Create missing clauses in library with full text from acquisition.gov
   - Endpoints: `/api/agiloft/upload-and-extract`, `/api/agiloft/verify-library-clauses`, `/api/agiloft/link-clauses-to-contract`, `/api/agiloft/create-missing-and-link`
 

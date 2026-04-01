@@ -5571,16 +5571,20 @@ async def verify_library_clauses(verify_request: VerifyLibraryRequest, request: 
 class LinkClausesRequest(BaseModel):
     config: AgiloftConfig
     contract_id: str
-    clause_ids: List[int]  # Agiloft clause record IDs
+    clause_ids: List[int]  # Agiloft Clause Library record IDs
     clause_numbers: List[str]  # For logging/display
+    clause_titles: List[str] = []  # Optional titles
 
 @agiloft_router.post("/link-clauses-to-contract")
 async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Request):
     """
-    Link clauses from the Agiloft Clause Library to a specific contract.
+    Link clauses from the Agiloft Clause Library to a contract by creating
+    records in the 'Contract Clauses' junction table.
     
-    Uses Agiloft REST API to update the contract's clause linked field.
-    Tries multiple approaches: direct linked field update, then junction table.
+    This follows the Agiloft pattern:
+    1. Each clause in the Clause Library has an ID
+    2. A "Contract Clauses" record links Contract ID → Clause Library ID
+    3. Creates one junction record per clause
     """
     user = await require_auth(request)
     config = link_request.config
@@ -5598,156 +5602,138 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
             }
 
             contract_id = link_request.contract_id
+            linked = []
+            failed = []
+            skipped = []
 
-            # Step 1: Fetch the contract to discover its clause-related fields
-            contract_url = _build_agiloft_url(config.kb_url, config.kb_name, f"contract/{contract_id}")
-            contract_resp = await client.get(
-                contract_url,
-                params={"lang": "en"},
-                headers=auth_headers
-            )
+            # Try table name variants for the Contract Clauses junction table
+            # Agiloft REST API may use different naming conventions
+            junction_table_names = [
+                "contract_clause",      # snake_case singular
+                "contract_clauses",     # snake_case plural
+                "Contract Clauses",     # Display name with spaces
+                "contract_to_clause",   # DAO-style naming
+            ]
 
-            clause_field_name = None
-            current_clause_ids = []
+            working_table = None
 
-            if contract_resp.status_code == 200:
-                contract_data = contract_resp.json()
-                record = contract_data.get("result", contract_data) if isinstance(contract_data, dict) else contract_data
+            for idx, (clause_id, clause_num) in enumerate(zip(link_request.clause_ids, link_request.clause_numbers)):
+                clause_title = link_request.clause_titles[idx] if idx < len(link_request.clause_titles) else ""
 
-                # Discover clause-related fields
-                all_fields = list(record.keys()) if isinstance(record, dict) else []
-                clause_fields = [f for f in all_fields if "clause" in f.lower() and "dao" not in f.lower()]
-                dao_clause_fields = [f for f in all_fields if "clause" in f.lower() and "dao" in f.lower()]
-
-                logger.info(f"Contract {contract_id} clause fields: {clause_fields}")
-                logger.info(f"Contract {contract_id} DAO clause fields: {dao_clause_fields}")
-
-                # Look for the linked clause field
-                # Common patterns: contract_to_clause, clauses, clause_list, linked_clauses
-                for candidate in ["contract_to_clause", "clauses", "clause_list", "linked_clauses", "clause"]:
-                    if candidate in all_fields:
-                        clause_field_name = candidate
-                        current_val = record.get(candidate, [])
-                        if isinstance(current_val, list):
-                            current_clause_ids = [item.get("id") if isinstance(item, dict) else item for item in current_val]
-                        break
-
-                if not clause_field_name:
-                    # Check DAO fields for linked tables
-                    for f in dao_clause_fields:
-                        clause_field_name = f.replace("DAO", "")
-                        break
-
-                logger.info(f"Clause field: {clause_field_name}, current IDs: {current_clause_ids}")
-
-            # Step 2: Try to link clauses using the discovered field or junction table
-            results = {"linked": [], "failed": [], "method": "unknown"}
-
-            if clause_field_name:
-                # Approach A: Update contract's linked field directly
-                # Merge existing clause IDs with new ones (avoid duplicates)
-                all_ids = list(set(current_clause_ids + link_request.clause_ids))
-                update_payload = {
-                    clause_field_name: [{"id": cid} for cid in all_ids]
+                # Build the junction record payload
+                # Matches user's Agiloft schema: Contract ID, Clause Library, Title
+                junction_payload = {
+                    "Contract ID": {"id": int(contract_id)},
+                    "Clause Library": {"id": int(clause_id)},
+                    "Title": clause_title or clause_num,
                 }
 
-                update_url = _build_agiloft_url(config.kb_url, config.kb_name, f"contract/{contract_id}")
-                update_resp = await client.patch(
-                    update_url,
-                    params={"lang": "en"},
-                    json=update_payload,
-                    headers=auth_headers
-                )
+                success = False
 
-                logger.info(f"Contract update response: {update_resp.status_code} - {update_resp.text[:500]}")
-
-                if update_resp.status_code in [200, 201]:
-                    results["method"] = f"linked_field:{clause_field_name}"
-                    results["linked"] = [{"number": n, "id": i} for n, i in zip(link_request.clause_numbers, link_request.clause_ids)]
-                else:
-                    # Approach B: Try PUT instead of PATCH
-                    update_resp2 = await client.put(
-                        update_url,
+                if working_table:
+                    # We already know which table name works
+                    create_url = _build_agiloft_url(config.kb_url, config.kb_name, working_table)
+                    resp = await client.post(
+                        create_url,
                         params={"lang": "en"},
-                        json=update_payload,
+                        json=junction_payload,
                         headers=auth_headers
                     )
-                    logger.info(f"Contract PUT response: {update_resp2.status_code} - {update_resp2.text[:500]}")
+                    logger.info(f"Contract Clause create [{working_table}] for {clause_num}: {resp.status_code}")
 
-                    if update_resp2.status_code in [200, 201]:
-                        results["method"] = f"put_linked_field:{clause_field_name}"
-                        results["linked"] = [{"number": n, "id": i} for n, i in zip(link_request.clause_numbers, link_request.clause_ids)]
+                    if resp.status_code in [200, 201]:
+                        resp_data = resp.json() if resp.text else {}
+                        new_id = None
+                        if isinstance(resp_data, dict):
+                            new_id = resp_data.get("id") or resp_data.get("result", {}).get("id")
+                        linked.append({"number": clause_num, "clause_library_id": clause_id, "contract_clause_id": new_id})
+                        success = True
                     else:
-                        # Approach C: Try upsert endpoint
-                        upsert_url = _build_agiloft_url(config.kb_url, config.kb_name, "contract/upsert")
-                        upsert_resp = await client.post(
-                            upsert_url,
-                            params={"lang": "en", "query": f"id={contract_id}"},
-                            json=update_payload,
-                            headers=auth_headers
-                        )
-                        logger.info(f"Contract upsert response: {upsert_resp.status_code} - {upsert_resp.text[:500]}")
+                        failed.append({
+                            "number": clause_num,
+                            "error": f"HTTP {resp.status_code}: {resp.text[:200]}"
+                        })
+                        success = True  # Don't retry other tables
+                else:
+                    # First clause: try each table name to find the working one
+                    for table_name in junction_table_names:
+                        create_url = _build_agiloft_url(config.kb_url, config.kb_name, table_name)
+                        logger.info(f"Trying junction table: {table_name} at {create_url}")
 
-                        if upsert_resp.status_code in [200, 201]:
-                            results["method"] = f"upsert:{clause_field_name}"
-                            results["linked"] = [{"number": n, "id": i} for n, i in zip(link_request.clause_numbers, link_request.clause_ids)]
-                        else:
-                            results["failed"] = [{
-                                "error": f"Could not update contract. Last response: HTTP {upsert_resp.status_code}",
-                                "response": upsert_resp.text[:300]
-                            }]
-            else:
-                # No clause field found - try junction table approach
-                # Try common junction table names
-                junction_tables = ["contract_to_clause", "contract_clause", "clause_contract"]
-                linked_any = False
+                        try:
+                            resp = await client.post(
+                                create_url,
+                                params={"lang": "en"},
+                                json=junction_payload,
+                                headers=auth_headers
+                            )
+                            logger.info(f"Response from {table_name}: {resp.status_code} - {resp.text[:300]}")
 
-                for table_name in junction_tables:
-                    junction_url = _build_agiloft_url(config.kb_url, config.kb_name, table_name)
-
-                    for clause_id, clause_num in zip(link_request.clause_ids, link_request.clause_numbers):
-                        junction_payload = {
-                            "contract": {"id": int(contract_id)},
-                            "clause": {"id": clause_id}
-                        }
-
-                        resp = await client.post(
-                            junction_url,
-                            params={"lang": "en"},
-                            json=junction_payload,
-                            headers=auth_headers
-                        )
-
-                        if resp.status_code in [200, 201]:
-                            results["linked"].append({"number": clause_num, "id": clause_id})
-                            linked_any = True
-                        else:
-                            # If first one fails, this table doesn't work
-                            if not linked_any:
+                            if resp.status_code in [200, 201]:
+                                working_table = table_name
+                                resp_data = resp.json() if resp.text else {}
+                                new_id = None
+                                if isinstance(resp_data, dict):
+                                    new_id = resp_data.get("id") or resp_data.get("result", {}).get("id")
+                                linked.append({"number": clause_num, "clause_library_id": clause_id, "contract_clause_id": new_id})
+                                success = True
+                                logger.info(f"Working junction table found: {table_name}")
                                 break
-                            results["failed"].append({"number": clause_num, "error": resp.text[:200]})
+                            elif resp.status_code == 404:
+                                # Table doesn't exist, try next
+                                continue
+                            else:
+                                # Table exists but payload may need adjustment
+                                # Try alternative field names
+                                alt_payloads = [
+                                    {
+                                        "contract_id": {"id": int(contract_id)},
+                                        "clause_library": {"id": int(clause_id)},
+                                        "title": clause_title or clause_num,
+                                    },
+                                    {
+                                        "contract": {"id": int(contract_id)},
+                                        "clause": {"id": int(clause_id)},
+                                        "title": clause_title or clause_num,
+                                    },
+                                ]
+                                for alt_payload in alt_payloads:
+                                    resp2 = await client.post(
+                                        create_url,
+                                        params={"lang": "en"},
+                                        json=alt_payload,
+                                        headers=auth_headers
+                                    )
+                                    logger.info(f"Alt payload for {table_name}: {resp2.status_code}")
+                                    if resp2.status_code in [200, 201]:
+                                        working_table = table_name
+                                        resp_data = resp2.json() if resp2.text else {}
+                                        new_id = None
+                                        if isinstance(resp_data, dict):
+                                            new_id = resp_data.get("id") or resp_data.get("result", {}).get("id")
+                                        linked.append({"number": clause_num, "clause_library_id": clause_id, "contract_clause_id": new_id})
+                                        success = True
+                                        break
+                                if success:
+                                    break
+                        except Exception as table_err:
+                            logger.warning(f"Error trying table {table_name}: {table_err}")
+                            continue
 
-                    if linked_any:
-                        results["method"] = f"junction_table:{table_name}"
-                        break
-
-                if not linked_any:
-                    # Final fallback: return discovered fields to help user configure
-                    all_fields_list = list(record.keys()) if isinstance(record, dict) else []
-                    results["failed"] = [{
-                        "error": "Could not determine clause linking method. Contract fields available.",
-                        "available_fields": all_fields_list,
-                        "clause_related_fields": [f for f in all_fields_list if "clause" in f.lower()],
-                    }]
+                if not success and not working_table:
+                    failed.append({
+                        "number": clause_num,
+                        "error": "Could not find working Contract Clauses table in Agiloft"
+                    })
 
             return {
-                "success": len(results["linked"]) > 0,
-                "linked_count": len(results["linked"]),
-                "failed_count": len(results["failed"]),
-                "linked": results["linked"],
-                "failed": results["failed"],
-                "method": results["method"],
-                "message": f"Successfully linked {len(results['linked'])} clauses to contract {contract_id}" if results["linked"] else "Could not link clauses - see failed details",
+                "success": len(linked) > 0,
+                "linked_count": len(linked),
+                "failed_count": len(failed),
+                "linked": linked,
+                "failed": failed,
+                "table_used": working_table or "none",
+                "message": f"Created {len(linked)} Contract Clause records linking to contract {contract_id}" if linked else "Could not create Contract Clause records - see errors",
             }
 
     except HTTPException:

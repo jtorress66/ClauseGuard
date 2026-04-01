@@ -632,6 +632,10 @@ export default function AgiloftIntegration({ user }) {
 
       const clauseIds = selectedForLink.filter(n => foundMap[n]).map(n => foundMap[n]);
       const clauseNumbers = selectedForLink.filter(n => foundMap[n]);
+      const clauseTitles = clauseNumbers.map(n => {
+        const extracted = extractedClauses.find(c => c.number === n);
+        return extracted?.title || n;
+      });
 
       const response = await fetch(`${API}/agiloft/link-clauses-to-contract`, {
         method: "POST",
@@ -642,6 +646,7 @@ export default function AgiloftIntegration({ user }) {
           contract_id: String(selectedUploadContract.id),
           clause_ids: clauseIds,
           clause_numbers: clauseNumbers,
+          clause_titles: clauseTitles,
         })
       });
 
