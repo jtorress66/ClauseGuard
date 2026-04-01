@@ -3808,19 +3808,19 @@ async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_
     service_url = _build_soap_url(kb_url, kb_name)
     ns = _build_soap_ns(kb_name)
 
-    # Step 1: Create the junction record (only DAO linked fields)
+    # Step 1: Create the junction record using linking class fields
     create_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
   <soapenv:Body>
     <ns:EWCreate_WSContract_Clause_Modification>
       <sessionId>{session_id}</sessionId>
       <ewwsBaseUserObjectMap>
-        <DAOcontract_Clause_Modification_To_Contract>
-          <entry><key>id</key><value>{contract_id}</value></entry>
-        </DAOcontract_Clause_Modification_To_Contract>
-        <DAOcontract_Clause_Modification_To_Clause>
-          <entry><key>id</key><value>{clause_id}</value></entry>
-        </DAOcontract_Clause_Modification_To_Clause>
+        <DAOcontract_Clause_Modification_To_Clause1>
+          <id>{clause_id}</id>
+        </DAOcontract_Clause_Modification_To_Clause1>
+        <related3F6D7799267Fe13332B0278Ecddbf9E8>
+          <id>{contract_id}</id>
+        </related3F6D7799267Fe13332B0278Ecddbf9E8>
       </ewwsBaseUserObjectMap>
     </ns:EWCreate_WSContract_Clause_Modification>
   </soapenv:Body>
@@ -3870,12 +3870,12 @@ async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_
       <sessionId>{session_id}</sessionId>
       <ewwsBaseUserObjectMap>
         <id>{new_id}</id>
-        <DAOcontract_Clause_Modification_To_Contract>
-          <entry><key>id</key><value>{contract_id}</value></entry>
-        </DAOcontract_Clause_Modification_To_Contract>
-        <DAOcontract_Clause_Modification_To_Clause>
-          <entry><key>id</key><value>{clause_id}</value></entry>
-        </DAOcontract_Clause_Modification_To_Clause>{text_xml}{type_xml}
+        <DAOcontract_Clause_Modification_To_Clause1>
+          <id>{clause_id}</id>
+        </DAOcontract_Clause_Modification_To_Clause1>
+        <related3F6D7799267Fe13332B0278Ecddbf9E8>
+          <id>{contract_id}</id>
+        </related3F6D7799267Fe13332B0278Ecddbf9E8>{text_xml}{type_xml}
       </ewwsBaseUserObjectMap>
     </ns:EWUpdate_WSContract_Clause_Modification>
   </soapenv:Body>
