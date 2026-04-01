@@ -5662,7 +5662,8 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
 
                 logger.info(f"Created record {new_id} for {clause_num}, setting linked fields via EWEdit")
 
-                # Step 2: Set linked fields via OLD EWEdit (handles swdao3link)
+                # Step 2: Set linked fields + metadata via OLD EWEdit
+                clause_type = "DFARS" if clause_num.startswith("252") else "FAR"
                 edit_params = {
                     "$KB": config.kb_name,
                     "$table": TABLE,
@@ -5672,6 +5673,8 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                     "id": str(new_id),
                     "contract_clause_modification_to_contract": str(contract_id_int),
                     "contract_clause_modification_to_clause": str(clause_id_int),
+                    "contract_id": str(contract_id_int),
+                    "contract_clause_type": clause_type,
                     "source": "Added from Library",
                 }
 
