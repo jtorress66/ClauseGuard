@@ -5577,38 +5577,39 @@ class LinkClausesRequest(BaseModel):
 
 @agiloft_router.post("/link-clauses-to-contract")
 async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Request):
-    """Create contract_clause_modification records and populate writable fields.
+    """Create contract_clause_modification records using the OLD EWCreate endpoint
+    for linked fields, then populate text via the new REST API PUT.
     
-    Agiloft REST API restrictions on this junction table:
-    - contract_id → triggers contract linked field → BLOCKED
-    - clause_id → triggers clause linked field → BLOCKED  
-    - clause_text with HTML → "unknown Linked Field object" → BLOCKED
-    - POST {} → creates bare record → WORKS
-    - source field → WORKS
-    
-    Strategy: POST {} to create, then PUT to set writable text fields.
+    The new REST API (alrest) cannot set swdao3link fields.
+    The old EWCreate endpoint CAN set linked fields via URL params.
     """
     import json as _json
+    import re
     user = await require_auth(request)
     config = link_request.config
     TABLE = "contract_clause_modification"
 
     try:
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            # Login via NEW REST API for token (needed for GET/PUT later)
             login_data = await agiloft_login(client, config)
             token = login_data.get("access_token")
             if not token:
                 raise HTTPException(status_code=401, detail="Authentication failed")
 
-            headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
-            base_url = _build_agiloft_url(config.kb_url, config.kb_name, TABLE)
+            rest_headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
+            rest_base = _build_agiloft_url(config.kb_url, config.kb_name, TABLE)
+            contract_id_int = int(link_request.contract_id)
 
-            # Step 1: Fetch clause details from Agiloft Library for populating text
+            # OLD EWCreate endpoint URL
+            ew_base = f"{config.kb_url.rstrip('/')}/ewws/EWCreate"
+
+            # Step 1: Fetch clause details from Agiloft Library
             clause_details = {}
             for clause_id in link_request.clause_ids:
                 try:
                     clause_url = _build_agiloft_url(config.kb_url, config.kb_name, f"clause/{int(clause_id)}")
-                    cr = await client.get(clause_url, params={"lang": "en"}, headers=headers)
+                    cr = await client.get(clause_url, params={"lang": "en"}, headers=rest_headers)
                     if cr.status_code == 200:
                         cdata = cr.json().get("result", {})
                         if isinstance(cdata, dict):
@@ -5616,102 +5617,75 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                 except Exception:
                     pass
 
-            # Step 2: Create one test record and discover which fields are writable via PUT
-            test_resp = await client.post(base_url, params={"lang": "en"}, json={}, headers=headers)
-            if test_resp.status_code not in [200, 201] or test_resp.json().get("success") is False:
-                return {"success": False, "message": f"Cannot create records: {test_resp.text[:300]}"}
-
-            test_id = test_resp.json().get("result")
-            if not isinstance(test_id, int):
-                test_id = test_resp.json().get("result", {}).get("id")
-
-            first_clause_id = int(link_request.clause_ids[0])
-            first_detail = clause_details.get(first_clause_id, {})
-            first_title = first_detail.get("clause_title", link_request.clause_numbers[0])
-            # Keep HTML for formatting/indentation, only strip <!-- comments --> that break Agiloft parser
-            import re
-            raw_text = first_detail.get("clause_text", "")
-            clean_html = re.sub(r'<!--.*?-->', '', raw_text, flags=re.DOTALL).strip()
-
-            # Test individual fields via PUT
-            writable_fields = {}
-            test_fields = [
-                ("clause_title", first_title),
-                ("source", "Added from Library"),
-                ("clause_type", first_detail.get("clause_type", "FAR")),
-                ("accepted_clause_text", clean_html if clean_html else ""),
-                ("source_text", clean_html if clean_html else ""),
-                ("clause_text", clean_html if clean_html else ""),
-            ]
-
-            for field_name, field_value in test_fields:
-                if not field_value:
-                    continue
-                try:
-                    put_url = f"{base_url}/{test_id}"
-                    pr = await client.put(put_url, params={"lang": "en"},
-                        json={field_name: field_value}, headers=headers)
-                    success = pr.status_code in [200, 201] and pr.json().get("success") is not False
-                    writable_fields[field_name] = success
-                    logger.info(f"PUT test field '{field_name}' on {test_id}: {'OK' if success else 'FAIL'} {pr.text[:200]}")
-                except Exception as e:
-                    writable_fields[field_name] = False
-                    logger.warning(f"PUT test field '{field_name}' error: {e}")
-
-            working_fields = [f for f, ok in writable_fields.items() if ok]
-            logger.info(f"Writable fields: {working_fields}")
-
-            # Record test_id as first linked
-            linked = [{"number": link_request.clause_numbers[0], "clause_library_id": first_clause_id, "contract_clause_id": test_id}]
+            # Step 2: Create records via OLD EWCreate with linked fields
+            linked = []
             failed = []
 
-            # Step 3: Create remaining records and populate with working fields
-            for i in range(1, len(link_request.clause_ids)):
-                cid = int(link_request.clause_ids[i])
-                cnum = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{cid}"
-                detail = clause_details.get(cid, {})
+            for i, clause_id in enumerate(link_request.clause_ids):
+                clause_num = link_request.clause_numbers[i] if i < len(link_request.clause_numbers) else f"clause_{clause_id}"
+                clause_id_int = int(clause_id)
 
-                # Create bare record
-                cr = await client.post(base_url, params={"lang": "en"}, json={}, headers=headers)
-                if cr.status_code not in [200, 201]:
-                    failed.append({"number": cnum, "error": cr.text[:200]})
-                    continue
+                # EWCreate with URL-encoded parameters for linked fields
+                ew_params = {
+                    "$KB": config.kb_name,
+                    "$table": TABLE,
+                    "$login": config.username,
+                    "$password": config.password,
+                    "$lang": "en",
+                    "contract_clause_modification_to_contract": str(contract_id_int),
+                    "contract_clause_modification_to_clause": str(clause_id_int),
+                    "source": "Added from Library",
+                }
 
-                rd = cr.json() if cr.text else {}
-                if rd.get("success") is False:
-                    failed.append({"number": cnum, "error": cr.text[:200]})
-                    continue
+                logger.info(f"EWCreate for {clause_num}: contract={contract_id_int}, clause={clause_id_int}")
 
-                new_id = rd.get("result")
-                if not isinstance(new_id, int):
-                    new_id = rd.get("result", {}).get("id") if isinstance(rd.get("result"), dict) else None
+                resp = await client.get(ew_base, params=ew_params)
+                resp_text = resp.text[:500]
+                logger.info(f"EWCreate response for {clause_num}: {resp.status_code} {resp_text}")
 
-                if not new_id:
-                    failed.append({"number": cnum, "error": "No ID returned"})
-                    continue
+                if resp.status_code == 200 and "EWREST_id=" in resp_text:
+                    # Parse the record ID from EWREST response format
+                    new_id = None
+                    for line in resp_text.split(";"):
+                        line = line.strip()
+                        if line.startswith("EWREST_id="):
+                            val = line.split("=", 1)[1].strip("'\"")
+                            try:
+                                new_id = int(val)
+                            except ValueError:
+                                pass
+                            break
 
-                # Populate with writable fields
-                if working_fields:
-                    raw = detail.get("clause_text", "")
-                    clean = re.sub(r'<!--.*?-->', '', raw, flags=re.DOTALL).strip()
+                    if new_id:
+                        # Step 3: Populate clause text via new REST PUT
+                        detail = clause_details.get(clause_id_int, {})
+                        raw = detail.get("clause_text", "")
+                        clean = re.sub(r'<!--.*?-->', '', raw, flags=re.DOTALL).strip()
 
-                    update_data = {}
-                    for f in working_fields:
-                        if f == "clause_title":
-                            update_data[f] = detail.get("clause_title", cnum)
-                        elif f == "source":
-                            update_data[f] = "Added from Library"
-                        elif f == "clause_type":
-                            update_data[f] = detail.get("clause_type", "FAR" if cnum.startswith("52.") else "DFARS")
-                        elif f in ("accepted_clause_text", "source_text", "clause_text"):
-                            if clean:
-                                update_data[f] = clean
+                        if clean:
+                            update_data = {
+                                "clause_text": clean,
+                                "accepted_clause_text": clean,
+                                "source_text": clean,
+                            }
+                            put_url = f"{rest_base}/{new_id}"
+                            await client.put(put_url, params={"lang": "en"},
+                                json=update_data, headers=rest_headers)
 
-                    if update_data:
-                        await client.put(f"{base_url}/{new_id}", params={"lang": "en"},
-                            json=update_data, headers=headers)
-
-                linked.append({"number": cnum, "clause_library_id": cid, "contract_clause_id": new_id})
+                        linked.append({"number": clause_num, "clause_library_id": clause_id_int, "contract_clause_id": new_id})
+                    else:
+                        failed.append({"number": clause_num, "error": f"Created but couldn't parse ID: {resp_text[:200]}"})
+                else:
+                    failed.append({"number": clause_num, "error": resp_text[:300]})
+                    # If first clause fails, stop to avoid spam
+                    if i == 0:
+                        logger.error(f"First clause failed via EWCreate, stopping")
+                        return {
+                            "success": False,
+                            "message": f"EWCreate failed: {resp_text[:300]}",
+                            "table_used": TABLE,
+                            "failed": failed,
+                        }
 
             return {
                 "success": len(linked) > 0,
@@ -5720,8 +5694,7 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                 "linked": linked,
                 "failed": failed,
                 "table_used": TABLE,
-                "writable_fields": writable_fields,
-                "message": f"Created {len(linked)} records (writable fields: {', '.join(working_fields) or 'none'})",
+                "message": f"Linked {len(linked)} clauses to contract {contract_id_int}" if linked else "Failed",
             }
 
     except HTTPException:
