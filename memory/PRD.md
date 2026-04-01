@@ -40,6 +40,14 @@ Build a Federal Clause Management app that helps government contractors manage F
   - **Date extraction** - Extracts effective dates from clause body text (e.g., "(JAN 2025)")
   - **PDF export** - Mirrors JSON export filtering: only selected sub-clauses and standalone clauses, with full text from acquisition.gov
   - Endpoints: `/api/contracts/{id}/extract-for-agiloft`, `/api/contracts/{id}/export-clauses-json`, `/api/contracts/{id}/export-clauses-pdf`
+- [x] **NEW: Upload to Agiloft Contract** - Upload PDF on Agiloft Sync page, extract clauses, verify in Agiloft Library, link to selected contract
+  - New "Upload to Contract" tab on Agiloft Integration page (default tab)
+  - Left panel: Search/select Agiloft contracts
+  - Right panel: 3-step wizard (Upload → Verify in Library → Link to Contract)
+  - Verify which extracted clauses already exist in Agiloft Clause Library
+  - Link existing library clauses to the selected Agiloft contract
+  - Create missing clauses in library with full text from acquisition.gov
+  - Endpoints: `/api/agiloft/upload-and-extract`, `/api/agiloft/verify-library-clauses`, `/api/agiloft/link-clauses-to-contract`, `/api/agiloft/create-missing-and-link`
 
 ### Flowdown Analysis
 - [x] Contract type and value-based filtering

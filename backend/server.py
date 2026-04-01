@@ -5330,6 +5330,516 @@ async def export_flowdown_report(report_request: FlowdownReportRequest, request:
         headers={"Content-Disposition": "attachment; filename=flowdown_report.pdf"}
     )
 
+
+# ==================== Agiloft Contract Clause Upload Endpoints ====================
+
+@agiloft_router.post("/upload-and-extract")
+async def agiloft_upload_and_extract(request: Request, file: UploadFile = File(...)):
+    """
+    Upload a PDF/document and extract clauses for Agiloft linking.
+    Returns the filtered clause list (same logic as JSON export).
+    """
+    user = await require_auth(request)
+
+    content = await file.read()
+    text_content = ""
+
+    if file.filename.endswith('.pdf'):
+        try:
+            import pdfplumber
+
+            def decode_cid_text(text: str) -> str:
+                cid_map = {
+                    '(cid:15)': '5', '(cid:12)': '2', '(cid:8)': '.',
+                    '(cid:11)': '1', '(cid:7)': '-', '(cid:14)': '4',
+                    '(cid:13)': '3', '(cid:16)': '6', '(cid:17)': '7',
+                    '(cid:18)': '8', '(cid:19)': '9', '(cid:10)': '0',
+                    '(cid:20)': '0', '(cid:21)': '1', '(cid:22)': '2',
+                    '(cid:23)': '3', '(cid:24)': '4', '(cid:25)': '5',
+                    '(cid:26)': '6', '(cid:27)': '7', '(cid:28)': '8',
+                    '(cid:29)': '9',
+                }
+                for cid, char in cid_map.items():
+                    text = text.replace(cid, char)
+                text = re.sub(r'\(cid:\d+\)', '', text)
+                return text
+
+            with pdfplumber.open(io.BytesIO(content)) as pdf:
+                all_text = []
+                for page in pdf.pages:
+                    page_text = page.extract_text() or ""
+                    page_text = decode_cid_text(page_text)
+                    all_text.append(page_text)
+                    tables = page.extract_tables()
+                    for table in tables:
+                        if table:
+                            for row in table:
+                                if row:
+                                    row_text = " ".join([str(cell) if cell else "" for cell in row])
+                                    row_text = decode_cid_text(row_text)
+                                    if row_text.strip():
+                                        all_text.append(row_text)
+                text_content = "\n".join(all_text)
+        except Exception as e:
+            logger.error(f"PDF extraction error: {e}")
+            text_content = content.decode('utf-8', errors='ignore')
+    else:
+        text_content = content.decode('utf-8', errors='ignore')
+
+    # Detect clause headers
+    clauses_found = _detect_clause_headers(text_content)
+    logger.info(f"Agiloft upload: detected {len(clauses_found)} clause headers")
+
+    # Run the same extraction logic as JSON export
+    extraction_result = _extract_clauses_with_checkboxes(text_content)
+
+    detected_clauses_set = set(clauses_found)
+    extracted_numbers = {c["number"] for c in extraction_result["top_level_clauses"]}
+    for clause_num in detected_clauses_set:
+        if clause_num not in extracted_numbers:
+            extraction_result["top_level_clauses"].append({
+                "number": clause_num, "title": "", "is_selected": True, "source_line": ""
+            })
+
+    # Extract date helper
+    def _extract_date(text):
+        if not text:
+            return ""
+        search_text = text[:600]
+        month_pattern = r'(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)'
+        date_match = re.search(rf'\(\s*({month_pattern})\s+(\d{{4}})\s*\)', search_text)
+        return f"{date_match.group(1)} {date_match.group(2)}" if date_match else ""
+
+    selected_sub_nums = {c["number"] for c in extraction_result["selected_sub_clauses"]}
+    unselected_sub_nums = {c["number"] for c in extraction_result.get("unselected_sub_clauses", [])}
+
+    parent_selected_map = {}
+    for parent_num, data in extraction_result.get("parent_clauses_with_selections", {}).items():
+        if data.get("selected_sub_clauses"):
+            parent_selected_map[parent_num] = data["selected_sub_clauses"]
+
+    filtered_clauses = []
+    seen_numbers = set()
+
+    # 1. Parent clauses with selected sub-clauses
+    if "checkbox_list" in parent_selected_map:
+        selected_subs = parent_selected_map["checkbox_list"]
+        parent_clause_patterns = ['52.212-5', '52.212-4', '52.244-6', '252.212-7001', '252.212-7000']
+        for potential_parent in parent_clause_patterns:
+            if potential_parent in detected_clauses_set and potential_parent not in selected_sub_nums:
+                seen_numbers.add(potential_parent)
+                db_clause = await db.clauses.find_one({"number": potential_parent}, {"_id": 0})
+                sub_details = []
+                for sub in selected_subs:
+                    sub_db = await db.clauses.find_one({"number": sub["number"]}, {"_id": 0})
+                    sub_title = sub_db.get("title", sub.get("title", "")) if sub_db else sub.get("title", "")
+                    date_match = re.search(r'\(([A-Z][a-z]{2}\s+\d{4})\)', sub.get("source_line", ""))
+                    sub_date = f" ({date_match.group(1)})" if date_match else ""
+                    sub_details.append({"number": sub["number"], "title": sub_title, "date": sub_date.strip(" ()")})
+                filtered_clauses.append({
+                    "number": potential_parent,
+                    "type": "FAR" if potential_parent.startswith("52.") else "DFARS",
+                    "title": db_clause.get("title", "") if db_clause else "",
+                    "date": _extract_date(db_clause.get("text", "")) if db_clause else "",
+                    "is_parent": True,
+                    "selected_sub_clauses": sub_details,
+                })
+                break
+
+    # 2. Selected sub-clauses
+    for clause in extraction_result["selected_sub_clauses"]:
+        if clause["number"] in seen_numbers:
+            continue
+        seen_numbers.add(clause["number"])
+        db_clause = await db.clauses.find_one({"number": clause["number"]}, {"_id": 0})
+        clause_title = db_clause.get("title", clause.get("title", "")) if db_clause else clause.get("title", "")
+        clause_text = db_clause.get("text", "") if db_clause else ""
+        date_match = re.search(r'\(([A-Z][a-z]{2}\s+\d{4})\)', clause.get("source_line", ""))
+        clause_date = date_match.group(1) if date_match else _extract_date(clause_text)
+        filtered_clauses.append({
+            "number": clause["number"],
+            "type": "FAR" if clause["number"].startswith("52.") else "DFARS",
+            "title": clause_title,
+            "date": clause_date,
+            "is_parent": False,
+            "selected_sub_clauses": [],
+        })
+
+    # 3. Other detected clauses (standalone, not unselected)
+    for clause_num in clauses_found:
+        if clause_num in seen_numbers or clause_num in unselected_sub_nums:
+            continue
+        seen_numbers.add(clause_num)
+        db_clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
+        clause_title = db_clause.get("title", "") if db_clause else ""
+        clause_text = db_clause.get("text", "") if db_clause else ""
+        filtered_clauses.append({
+            "number": clause_num,
+            "type": "FAR" if clause_num.startswith("52.") else "DFARS",
+            "title": clause_title,
+            "date": _extract_date(clause_text),
+            "is_parent": False,
+            "selected_sub_clauses": [],
+        })
+
+    return {
+        "success": True,
+        "filename": file.filename,
+        "total_detected": len(clauses_found),
+        "total_filtered": len(filtered_clauses),
+        "clauses": filtered_clauses,
+    }
+
+
+class VerifyLibraryRequest(BaseModel):
+    config: AgiloftConfig
+    clause_numbers: List[str]
+
+@agiloft_router.post("/verify-library-clauses")
+async def verify_library_clauses(verify_request: VerifyLibraryRequest, request: Request):
+    """
+    Check which clause numbers exist in the Agiloft Clause Library.
+    Returns found (with IDs) and missing lists.
+    """
+    user = await require_auth(request)
+    config = verify_request.config
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            login_data = await agiloft_login(client, config)
+            token = login_data.get("access_token")
+            if not token:
+                raise HTTPException(status_code=401, detail="Authentication failed")
+
+            auth_headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}"
+            }
+
+            # Fetch all clause numbers from Agiloft library
+            search_url = _build_agiloft_url(config.kb_url, config.kb_name, "clause/search")
+            search_payload = {
+                "search": "",
+                "field": ["clause_number", "id"],
+                "query": ""
+            }
+
+            response = await client.post(
+                search_url,
+                params={"lang": "en"},
+                json=search_payload,
+                headers=auth_headers
+            )
+
+            agiloft_clauses = {}
+            if response.status_code == 200:
+                data = response.json()
+                result = data.get("result", [])
+                if isinstance(result, list):
+                    for record in result:
+                        cn = str(record.get("clause_number", "")).strip()
+                        cid = record.get("id", record.get("$id"))
+                        if cn:
+                            agiloft_clauses[cn] = cid
+
+            logger.info(f"Agiloft library has {len(agiloft_clauses)} clauses")
+
+            found = []
+            missing = []
+            for num in verify_request.clause_numbers:
+                if num in agiloft_clauses:
+                    found.append({"number": num, "agiloft_id": agiloft_clauses[num]})
+                else:
+                    missing.append({"number": num})
+
+            return {
+                "success": True,
+                "total_checked": len(verify_request.clause_numbers),
+                "found_count": len(found),
+                "missing_count": len(missing),
+                "found": found,
+                "missing": missing,
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Verify library error: {e}")
+        return {"success": False, "message": str(e)}
+
+
+class LinkClausesRequest(BaseModel):
+    config: AgiloftConfig
+    contract_id: str
+    clause_ids: List[int]  # Agiloft clause record IDs
+    clause_numbers: List[str]  # For logging/display
+
+@agiloft_router.post("/link-clauses-to-contract")
+async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Request):
+    """
+    Link clauses from the Agiloft Clause Library to a specific contract.
+    
+    Uses Agiloft REST API to update the contract's clause linked field.
+    Tries multiple approaches: direct linked field update, then junction table.
+    """
+    user = await require_auth(request)
+    config = link_request.config
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            login_data = await agiloft_login(client, config)
+            token = login_data.get("access_token")
+            if not token:
+                raise HTTPException(status_code=401, detail="Authentication failed")
+
+            auth_headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}"
+            }
+
+            contract_id = link_request.contract_id
+
+            # Step 1: Fetch the contract to discover its clause-related fields
+            contract_url = _build_agiloft_url(config.kb_url, config.kb_name, f"contract/{contract_id}")
+            contract_resp = await client.get(
+                contract_url,
+                params={"lang": "en"},
+                headers=auth_headers
+            )
+
+            clause_field_name = None
+            current_clause_ids = []
+
+            if contract_resp.status_code == 200:
+                contract_data = contract_resp.json()
+                record = contract_data.get("result", contract_data) if isinstance(contract_data, dict) else contract_data
+
+                # Discover clause-related fields
+                all_fields = list(record.keys()) if isinstance(record, dict) else []
+                clause_fields = [f for f in all_fields if "clause" in f.lower() and "dao" not in f.lower()]
+                dao_clause_fields = [f for f in all_fields if "clause" in f.lower() and "dao" in f.lower()]
+
+                logger.info(f"Contract {contract_id} clause fields: {clause_fields}")
+                logger.info(f"Contract {contract_id} DAO clause fields: {dao_clause_fields}")
+
+                # Look for the linked clause field
+                # Common patterns: contract_to_clause, clauses, clause_list, linked_clauses
+                for candidate in ["contract_to_clause", "clauses", "clause_list", "linked_clauses", "clause"]:
+                    if candidate in all_fields:
+                        clause_field_name = candidate
+                        current_val = record.get(candidate, [])
+                        if isinstance(current_val, list):
+                            current_clause_ids = [item.get("id") if isinstance(item, dict) else item for item in current_val]
+                        break
+
+                if not clause_field_name:
+                    # Check DAO fields for linked tables
+                    for f in dao_clause_fields:
+                        clause_field_name = f.replace("DAO", "")
+                        break
+
+                logger.info(f"Clause field: {clause_field_name}, current IDs: {current_clause_ids}")
+
+            # Step 2: Try to link clauses using the discovered field or junction table
+            results = {"linked": [], "failed": [], "method": "unknown"}
+
+            if clause_field_name:
+                # Approach A: Update contract's linked field directly
+                # Merge existing clause IDs with new ones (avoid duplicates)
+                all_ids = list(set(current_clause_ids + link_request.clause_ids))
+                update_payload = {
+                    clause_field_name: [{"id": cid} for cid in all_ids]
+                }
+
+                update_url = _build_agiloft_url(config.kb_url, config.kb_name, f"contract/{contract_id}")
+                update_resp = await client.patch(
+                    update_url,
+                    params={"lang": "en"},
+                    json=update_payload,
+                    headers=auth_headers
+                )
+
+                logger.info(f"Contract update response: {update_resp.status_code} - {update_resp.text[:500]}")
+
+                if update_resp.status_code in [200, 201]:
+                    results["method"] = f"linked_field:{clause_field_name}"
+                    results["linked"] = [{"number": n, "id": i} for n, i in zip(link_request.clause_numbers, link_request.clause_ids)]
+                else:
+                    # Approach B: Try PUT instead of PATCH
+                    update_resp2 = await client.put(
+                        update_url,
+                        params={"lang": "en"},
+                        json=update_payload,
+                        headers=auth_headers
+                    )
+                    logger.info(f"Contract PUT response: {update_resp2.status_code} - {update_resp2.text[:500]}")
+
+                    if update_resp2.status_code in [200, 201]:
+                        results["method"] = f"put_linked_field:{clause_field_name}"
+                        results["linked"] = [{"number": n, "id": i} for n, i in zip(link_request.clause_numbers, link_request.clause_ids)]
+                    else:
+                        # Approach C: Try upsert endpoint
+                        upsert_url = _build_agiloft_url(config.kb_url, config.kb_name, "contract/upsert")
+                        upsert_resp = await client.post(
+                            upsert_url,
+                            params={"lang": "en", "query": f"id={contract_id}"},
+                            json=update_payload,
+                            headers=auth_headers
+                        )
+                        logger.info(f"Contract upsert response: {upsert_resp.status_code} - {upsert_resp.text[:500]}")
+
+                        if upsert_resp.status_code in [200, 201]:
+                            results["method"] = f"upsert:{clause_field_name}"
+                            results["linked"] = [{"number": n, "id": i} for n, i in zip(link_request.clause_numbers, link_request.clause_ids)]
+                        else:
+                            results["failed"] = [{
+                                "error": f"Could not update contract. Last response: HTTP {upsert_resp.status_code}",
+                                "response": upsert_resp.text[:300]
+                            }]
+            else:
+                # No clause field found - try junction table approach
+                # Try common junction table names
+                junction_tables = ["contract_to_clause", "contract_clause", "clause_contract"]
+                linked_any = False
+
+                for table_name in junction_tables:
+                    junction_url = _build_agiloft_url(config.kb_url, config.kb_name, table_name)
+
+                    for clause_id, clause_num in zip(link_request.clause_ids, link_request.clause_numbers):
+                        junction_payload = {
+                            "contract": {"id": int(contract_id)},
+                            "clause": {"id": clause_id}
+                        }
+
+                        resp = await client.post(
+                            junction_url,
+                            params={"lang": "en"},
+                            json=junction_payload,
+                            headers=auth_headers
+                        )
+
+                        if resp.status_code in [200, 201]:
+                            results["linked"].append({"number": clause_num, "id": clause_id})
+                            linked_any = True
+                        else:
+                            # If first one fails, this table doesn't work
+                            if not linked_any:
+                                break
+                            results["failed"].append({"number": clause_num, "error": resp.text[:200]})
+
+                    if linked_any:
+                        results["method"] = f"junction_table:{table_name}"
+                        break
+
+                if not linked_any:
+                    # Final fallback: return discovered fields to help user configure
+                    all_fields_list = list(record.keys()) if isinstance(record, dict) else []
+                    results["failed"] = [{
+                        "error": "Could not determine clause linking method. Contract fields available.",
+                        "available_fields": all_fields_list,
+                        "clause_related_fields": [f for f in all_fields_list if "clause" in f.lower()],
+                    }]
+
+            return {
+                "success": len(results["linked"]) > 0,
+                "linked_count": len(results["linked"]),
+                "failed_count": len(results["failed"]),
+                "linked": results["linked"],
+                "failed": results["failed"],
+                "method": results["method"],
+                "message": f"Successfully linked {len(results['linked'])} clauses to contract {contract_id}" if results["linked"] else "Could not link clauses - see failed details",
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Link clauses error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "message": str(e)}
+
+
+class CreateAndLinkRequest(BaseModel):
+    config: AgiloftConfig
+    contract_id: str
+    clauses: List[Dict[str, Any]]  # [{number, title, date, type}, ...]
+
+@agiloft_router.post("/create-missing-and-link")
+async def create_missing_and_link(create_request: CreateAndLinkRequest, request: Request):
+    """
+    Create missing clauses in Agiloft Clause Library (with full text from acquisition.gov),
+    then link them to the contract.
+    """
+    user = await require_auth(request)
+    config = create_request.config
+
+    try:
+        agiloft_client = AgiloftClient(AgiloftConfig(
+            kb_url=config.kb_url,
+            kb_name=config.kb_name,
+            username=config.username,
+            password=config.password
+        )) if AGILOFT_CLIENT_AVAILABLE else None
+
+        if not agiloft_client:
+            return {"success": False, "message": "Agiloft client not available"}
+
+        logged_in = await agiloft_client.login()
+        if not logged_in:
+            return {"success": False, "message": "Failed to authenticate with Agiloft"}
+
+        created = []
+        failed = []
+
+        for clause in create_request.clauses:
+            clause_num = clause["number"]
+            clause_type = clause.get("type", "FAR" if clause_num.startswith("52.") else "DFARS")
+
+            # Fetch full text from acquisition.gov
+            acq_data = await fetch_clause_from_acquisition_gov(clause_num)
+            clause_text = acq_data.get("text", "") if acq_data else ""
+            clause_title = acq_data.get("title", clause.get("title", "")) if acq_data else clause.get("title", "")
+            clause_date = clause.get("date", "")
+
+            # Fetch HTML version for rich text
+            html_content = await fetch_clause_html_from_acquisition_gov(clause_num)
+
+            # Build clause data for Agiloft
+            clause_data = {
+                "clause_number": clause_num,
+                "clause_title": clause_title,
+                "clause_text": html_content if html_content else clause_text,
+            }
+            if clause_date:
+                clause_data["clause_date"] = clause_date
+
+            # Get clause type ID
+            type_id = await agiloft_client.get_clause_type_id(clause_type)
+            if type_id:
+                clause_data["clause_to_clause_type"] = {"id": type_id}
+
+            result = await agiloft_client.upsert_clause(clause_data, clause_num)
+
+            if result.get("success"):
+                new_id = result.get("data", {}).get("result", {}).get("id") if isinstance(result.get("data"), dict) else None
+                created.append({"number": clause_num, "agiloft_id": new_id})
+            else:
+                failed.append({"number": clause_num, "error": result.get("error", "Unknown error")})
+
+        return {
+            "success": len(created) > 0,
+            "created_count": len(created),
+            "failed_count": len(failed),
+            "created": created,
+            "failed": failed,
+            "message": f"Created {len(created)} clauses in Agiloft Library" if created else "Failed to create clauses",
+        }
+
+    except Exception as e:
+        logger.error(f"Create and link error: {e}")
+        return {"success": False, "message": str(e)}
+
+
 # ==================== Include Routers ====================
 
 # Import the new comparison routes module

@@ -4,7 +4,7 @@ import {
   ArrowLeft, Database, RefreshCw, CheckCircle, 
   AlertCircle, Loader2, Settings, Link2, Upload,
   FileText, AlertTriangle, ArrowUpRight, Download,
-  Check, X, Search, LayoutDashboard
+  Check, X, Search, LayoutDashboard, FileUp, LinkIcon
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,6 +64,24 @@ export default function AgiloftIntegration({ user }) {
   const [selectedMissingClauses, setSelectedMissingClauses] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [fetchFresh, setFetchFresh] = useState(false);
+
+  // Upload to Contract state
+  const [uploadFile, setUploadFile] = useState(null);
+  const [uploading2, setUploading2] = useState(false);
+  const [extractedClauses, setExtractedClauses] = useState([]);
+  const [extractedFilename, setExtractedFilename] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [verificationResult, setVerificationResult] = useState(null);
+  const [selectedForLink, setSelectedForLink] = useState([]);
+  const [linking, setLinking] = useState(false);
+  const [linkResult, setLinkResult] = useState(null);
+  const [creatingMissing, setCreatingMissing] = useState(false);
+  // Contract selection for Upload tab (separate from Analyze tab)
+  const [uploadContracts, setUploadContracts] = useState([]);
+  const [loadingUploadContracts, setLoadingUploadContracts] = useState(false);
+  const [selectedUploadContract, setSelectedUploadContract] = useState(null);
+  const [uploadContractSearch, setUploadContractSearch] = useState("");
+  const [uploadContractIdFilter, setUploadContractIdFilter] = useState("");
 
   const handleConfigChange = (field, value) => {
     setConfig(prev => ({ ...prev, [field]: value }));
@@ -487,6 +505,209 @@ export default function AgiloftIntegration({ user }) {
     setSelectedMissingClauses([]);
   };
 
+  // ==================== Upload to Contract Functions ====================
+
+  const searchUploadContracts = async () => {
+    if (!connectionStatus?.success) {
+      toast.error("Please test connection first");
+      return;
+    }
+    setLoadingUploadContracts(true);
+    setSelectedUploadContract(null);
+    try {
+      const searchParams = { config, limit: 50 };
+      if (uploadContractSearch.trim()) searchParams.search_query = uploadContractSearch.trim();
+      if (uploadContractIdFilter.trim()) searchParams.contract_id = uploadContractIdFilter.trim();
+
+      const response = await fetch(`${API}/agiloft/contracts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(searchParams)
+      });
+      const result = await response.json();
+      if (result.success) {
+        setUploadContracts(result.contracts || []);
+        if (result.contracts?.length > 0) toast.success(`Found ${result.contracts.length} contracts`);
+        else toast.info("No contracts found");
+      } else {
+        toast.error(result.message || "Search failed");
+      }
+    } catch (error) {
+      toast.error(`Search failed: ${error.message}`);
+    } finally {
+      setLoadingUploadContracts(false);
+    }
+  };
+
+  const handleFileUploadAndExtract = async () => {
+    if (!uploadFile) {
+      toast.error("Please select a file first");
+      return;
+    }
+    setUploading2(true);
+    setExtractedClauses([]);
+    setVerificationResult(null);
+    setLinkResult(null);
+    setSelectedForLink([]);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", uploadFile);
+
+      const response = await fetch(`${API}/agiloft/upload-and-extract`, {
+        method: "POST",
+        credentials: "include",
+        body: formData
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        setExtractedClauses(result.clauses || []);
+        setExtractedFilename(result.filename || uploadFile.name);
+        toast.success(`Extracted ${result.total_filtered} clauses from ${result.filename}`);
+      } else {
+        toast.error(result.message || "Extraction failed");
+      }
+    } catch (error) {
+      toast.error(`Upload failed: ${error.message}`);
+    } finally {
+      setUploading2(false);
+    }
+  };
+
+  const verifyClausesInLibrary = async () => {
+    if (!connectionStatus?.success) {
+      toast.error("Connect to Agiloft first");
+      return;
+    }
+    if (extractedClauses.length === 0) {
+      toast.error("No clauses to verify");
+      return;
+    }
+    setVerifying(true);
+    setVerificationResult(null);
+    setLinkResult(null);
+
+    try {
+      const clauseNumbers = extractedClauses.map(c => c.number);
+      const response = await fetch(`${API}/agiloft/verify-library-clauses`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ config, clause_numbers: clauseNumbers })
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        setVerificationResult(result);
+        // Auto-select all found clauses for linking
+        setSelectedForLink(result.found.map(c => c.number));
+        toast.success(`${result.found_count} found in library, ${result.missing_count} missing`);
+      } else {
+        toast.error(result.message || "Verification failed");
+      }
+    } catch (error) {
+      toast.error(`Verification failed: ${error.message}`);
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const linkSelectedClausesToContract = async () => {
+    if (!selectedUploadContract) {
+      toast.error("Please select an Agiloft contract first");
+      return;
+    }
+    if (!verificationResult || selectedForLink.length === 0) {
+      toast.error("No clauses selected for linking");
+      return;
+    }
+    setLinking(true);
+    setLinkResult(null);
+
+    try {
+      const foundMap = {};
+      verificationResult.found.forEach(c => { foundMap[c.number] = c.agiloft_id; });
+
+      const clauseIds = selectedForLink.filter(n => foundMap[n]).map(n => foundMap[n]);
+      const clauseNumbers = selectedForLink.filter(n => foundMap[n]);
+
+      const response = await fetch(`${API}/agiloft/link-clauses-to-contract`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          config,
+          contract_id: String(selectedUploadContract.id),
+          clause_ids: clauseIds,
+          clause_numbers: clauseNumbers,
+        })
+      });
+
+      const result = await response.json();
+      setLinkResult(result);
+      if (result.success) {
+        toast.success(result.message || `Linked ${result.linked_count} clauses!`);
+      } else {
+        toast.error(result.message || "Linking failed");
+      }
+    } catch (error) {
+      toast.error(`Link failed: ${error.message}`);
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  const createMissingInLibrary = async () => {
+    if (!verificationResult?.missing?.length) return;
+    setCreatingMissing(true);
+
+    try {
+      const missingClauses = verificationResult.missing.map(m => {
+        const extracted = extractedClauses.find(c => c.number === m.number);
+        return {
+          number: m.number,
+          title: extracted?.title || "",
+          date: extracted?.date || "",
+          type: extracted?.type || (m.number.startsWith("252") ? "DFARS" : "FAR"),
+        };
+      });
+
+      const response = await fetch(`${API}/agiloft/create-missing-and-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          config,
+          contract_id: String(selectedUploadContract?.id || ""),
+          clauses: missingClauses,
+        })
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        toast.success(`Created ${result.created_count} clauses in Agiloft Library`);
+        // Re-verify to update the found/missing counts
+        await verifyClausesInLibrary();
+      } else {
+        toast.error(result.message || "Creation failed");
+      }
+    } catch (error) {
+      toast.error(`Creation failed: ${error.message}`);
+    } finally {
+      setCreatingMissing(false);
+    }
+  };
+
+  const toggleLinkSelection = (clauseNumber) => {
+    setSelectedForLink(prev =>
+      prev.includes(clauseNumber)
+        ? prev.filter(n => n !== clauseNumber)
+        : [...prev, clauseNumber]
+    );
+  };
+
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Header */}
@@ -616,8 +837,12 @@ export default function AgiloftIntegration({ user }) {
         </div>
 
         {/* Tabs for different functions */}
-        <Tabs defaultValue="compare" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3 lg:w-auto lg:inline-grid">
+        <Tabs defaultValue="upload_to_contract" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-grid">
+            <TabsTrigger value="upload_to_contract" className="gap-2">
+              <FileUp className="w-4 h-4" />
+              Upload to Contract
+            </TabsTrigger>
             <TabsTrigger value="compare" className="gap-2">
               <RefreshCw className="w-4 h-4" />
               Compare Clauses
@@ -631,6 +856,345 @@ export default function AgiloftIntegration({ user }) {
               Analyze Contracts
             </TabsTrigger>
           </TabsList>
+
+          {/* Upload to Contract Tab */}
+          <TabsContent value="upload_to_contract">
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+              {/* Left: Contract Selection (2 cols) */}
+              <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200">
+                <div className="p-5 border-b border-slate-100">
+                  <h3 className="font-heading font-bold text-lg text-navy-900 mb-3">
+                    Select Agiloft Contract
+                  </h3>
+                  <div className="space-y-3">
+                    <div>
+                      <Label htmlFor="uploadContractSearch" className="text-xs">Search by Title</Label>
+                      <Input
+                        id="uploadContractSearch"
+                        placeholder="Search contracts..."
+                        value={uploadContractSearch}
+                        onChange={(e) => setUploadContractSearch(e.target.value)}
+                        className="h-9"
+                        data-testid="upload-contract-search"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="uploadContractIdFilter" className="text-xs">Contract ID</Label>
+                      <Input
+                        id="uploadContractIdFilter"
+                        placeholder="e.g., 690"
+                        value={uploadContractIdFilter}
+                        onChange={(e) => setUploadContractIdFilter(e.target.value)}
+                        className="h-9"
+                        data-testid="upload-contract-id-filter"
+                      />
+                    </div>
+                    <Button
+                      onClick={searchUploadContracts}
+                      disabled={loadingUploadContracts || !connectionStatus?.success}
+                      variant="default"
+                      size="sm"
+                      className="w-full bg-teal-600 hover:bg-teal-700"
+                      data-testid="search-upload-contracts-btn"
+                    >
+                      {loadingUploadContracts ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Search className="w-4 h-4 mr-2" />
+                      )}
+                      Search Contracts
+                    </Button>
+                  </div>
+                </div>
+                <div className="max-h-72 overflow-y-auto">
+                  {uploadContracts.length === 0 ? (
+                    <div className="p-6 text-center">
+                      <Database className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                      <p className="text-sm text-slate-500">
+                        {connectionStatus?.success
+                          ? "Search for contracts in Agiloft"
+                          : "Connect to Agiloft first"}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-slate-100">
+                      {uploadContracts.map((contract) => (
+                        <div
+                          key={contract.id}
+                          className={`p-3 cursor-pointer hover:bg-slate-50 transition-colors ${
+                            selectedUploadContract?.id === contract.id ? "bg-teal-50 border-l-4 border-teal-500" : ""
+                          }`}
+                          onClick={() => setSelectedUploadContract(contract)}
+                          data-testid={`upload-contract-${contract.id}`}
+                        >
+                          <p className="font-medium text-sm text-navy-900 truncate">
+                            {contract.contract_title || contract.name || `Contract #${contract.id}`}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            ID: {contract.id} {contract.company_name ? `- ${contract.company_name}` : ""}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {selectedUploadContract && (
+                  <div className="p-4 border-t border-slate-100 bg-teal-50">
+                    <div className="flex items-center gap-2 text-sm text-teal-800">
+                      <CheckCircle className="w-4 h-4" />
+                      <span className="font-medium">Selected:</span>
+                      <span className="truncate">{selectedUploadContract.contract_title || selectedUploadContract.name}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Right: Upload & Extract & Link (3 cols) */}
+              <div className="lg:col-span-3 space-y-6">
+                {/* Step 1: Upload Document */}
+                <div className="bg-white rounded-xl border border-slate-200 p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-7 h-7 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-sm font-bold">1</div>
+                    <h3 className="font-heading font-bold text-lg text-navy-900">Upload Document</h3>
+                  </div>
+                  <div className="flex items-end gap-3">
+                    <div className="flex-1">
+                      <Label htmlFor="clause-file">PDF or text document with clauses</Label>
+                      <Input
+                        id="clause-file"
+                        type="file"
+                        accept=".pdf,.txt,.doc,.docx"
+                        onChange={(e) => {
+                          setUploadFile(e.target.files?.[0] || null);
+                          setExtractedClauses([]);
+                          setVerificationResult(null);
+                          setLinkResult(null);
+                        }}
+                        className="mt-1"
+                        data-testid="clause-file-input"
+                      />
+                    </div>
+                    <Button
+                      onClick={handleFileUploadAndExtract}
+                      disabled={!uploadFile || uploading2}
+                      className="bg-teal-600 hover:bg-teal-700"
+                      data-testid="extract-clauses-btn"
+                    >
+                      {uploading2 ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <FileUp className="w-4 h-4 mr-2" />
+                      )}
+                      Extract Clauses
+                    </Button>
+                  </div>
+                  {extractedFilename && extractedClauses.length > 0 && (
+                    <p className="text-sm text-green-600 mt-2">
+                      <CheckCircle className="w-4 h-4 inline mr-1" />
+                      {extractedClauses.length} clauses extracted from {extractedFilename}
+                    </p>
+                  )}
+                </div>
+
+                {/* Step 2: Extracted Clauses & Verification */}
+                {extractedClauses.length > 0 && (
+                  <div className="bg-white rounded-xl border border-slate-200 p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-sm font-bold">2</div>
+                        <h3 className="font-heading font-bold text-lg text-navy-900">Verify in Agiloft Library</h3>
+                      </div>
+                      <Button
+                        onClick={verifyClausesInLibrary}
+                        disabled={verifying || !connectionStatus?.success}
+                        className="bg-teal-600 hover:bg-teal-700"
+                        data-testid="verify-library-btn"
+                      >
+                        {verifying ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <Search className="w-4 h-4 mr-2" />
+                        )}
+                        Verify in Library
+                      </Button>
+                    </div>
+
+                    {/* Clause List */}
+                    <div className="max-h-64 overflow-y-auto border border-slate-100 rounded-lg divide-y divide-slate-50">
+                      {extractedClauses.map((clause) => {
+                        const foundInLib = verificationResult?.found?.find(f => f.number === clause.number);
+                        const missingInLib = verificationResult?.missing?.find(m => m.number === clause.number);
+                        const isSelected = selectedForLink.includes(clause.number);
+
+                        return (
+                          <div
+                            key={clause.number}
+                            className={`flex items-center gap-3 p-2.5 text-sm ${
+                              isSelected ? "bg-teal-50" : ""
+                            }`}
+                          >
+                            {verificationResult && foundInLib && (
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleLinkSelection(clause.number)}
+                                className="w-4 h-4 text-teal-600 rounded"
+                              />
+                            )}
+                            <span className="font-mono font-medium text-navy-900 w-28 flex-shrink-0">{clause.number}</span>
+                            <Badge className={clause.type === "FAR" ? "bg-blue-100 text-blue-700" : "bg-purple-100 text-purple-700"}>
+                              {clause.type}
+                            </Badge>
+                            <span className="text-slate-600 truncate flex-1">{clause.title}</span>
+                            {clause.date && <span className="text-xs text-slate-400 flex-shrink-0">{clause.date}</span>}
+                            {verificationResult && (
+                              foundInLib ? (
+                                <Badge className="bg-green-100 text-green-700 flex-shrink-0">In Library</Badge>
+                              ) : missingInLib ? (
+                                <Badge className="bg-amber-100 text-amber-700 flex-shrink-0">Missing</Badge>
+                              ) : null
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Verification Summary */}
+                    {verificationResult && (
+                      <div className="mt-4 grid grid-cols-2 gap-3">
+                        <div className="text-center p-3 bg-green-50 rounded-lg border border-green-100">
+                          <div className="text-xl font-bold text-green-600">{verificationResult.found_count}</div>
+                          <div className="text-xs text-slate-500">Found in Library</div>
+                        </div>
+                        <div className="text-center p-3 bg-amber-50 rounded-lg border border-amber-100">
+                          <div className="text-xl font-bold text-amber-600">{verificationResult.missing_count}</div>
+                          <div className="text-xs text-slate-500">Missing from Library</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Create Missing Clauses */}
+                    {verificationResult?.missing?.length > 0 && (
+                      <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm text-amber-800">
+                            <AlertTriangle className="w-4 h-4 inline mr-1" />
+                            {verificationResult.missing_count} clauses missing from Agiloft Library
+                          </div>
+                          <Button
+                            onClick={createMissingInLibrary}
+                            disabled={creatingMissing}
+                            size="sm"
+                            className="bg-amber-600 hover:bg-amber-700 text-white"
+                            data-testid="create-missing-btn"
+                          >
+                            {creatingMissing ? (
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            ) : (
+                              <Upload className="w-4 h-4 mr-2" />
+                            )}
+                            Create in Library
+                          </Button>
+                        </div>
+                        <p className="text-xs text-amber-600 mt-1">
+                          Fetches full text from acquisition.gov and creates them in your Agiloft Clause Library
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Step 3: Link to Contract */}
+                {verificationResult && verificationResult.found_count > 0 && (
+                  <div className="bg-white rounded-xl border border-slate-200 p-6">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="w-7 h-7 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-sm font-bold">3</div>
+                      <h3 className="font-heading font-bold text-lg text-navy-900">Link to Agiloft Contract</h3>
+                    </div>
+
+                    {!selectedUploadContract ? (
+                      <div className="p-4 bg-slate-50 rounded-lg text-center">
+                        <p className="text-slate-500 text-sm">Select a contract from the left panel to link clauses</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="p-3 bg-slate-50 rounded-lg">
+                          <p className="text-sm text-navy-900">
+                            <span className="font-medium">Target Contract:</span>{" "}
+                            {selectedUploadContract.contract_title || selectedUploadContract.name} (ID: {selectedUploadContract.id})
+                          </p>
+                          <p className="text-xs text-slate-500 mt-1">
+                            {selectedForLink.length} of {verificationResult.found_count} library clauses selected for linking
+                          </p>
+                        </div>
+
+                        <Button
+                          onClick={linkSelectedClausesToContract}
+                          disabled={linking || selectedForLink.length === 0}
+                          className="w-full bg-teal-600 hover:bg-teal-700"
+                          data-testid="link-clauses-btn"
+                        >
+                          {linking ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Linking...
+                            </>
+                          ) : (
+                            <>
+                              <LinkIcon className="w-4 h-4 mr-2" />
+                              Link {selectedForLink.length} Clauses to Contract
+                            </>
+                          )}
+                        </Button>
+
+                        {linkResult && (
+                          <div className={`p-4 rounded-lg ${
+                            linkResult.success ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"
+                          }`}>
+                            <div className="flex items-center gap-2 mb-2">
+                              {linkResult.success ? (
+                                <CheckCircle className="w-5 h-5 text-green-600" />
+                              ) : (
+                                <AlertCircle className="w-5 h-5 text-red-600" />
+                              )}
+                              <span className={`font-medium ${linkResult.success ? "text-green-700" : "text-red-700"}`}>
+                                {linkResult.message}
+                              </span>
+                            </div>
+                            {linkResult.method && linkResult.method !== "unknown" && (
+                              <p className="text-xs text-slate-500">Method: {linkResult.method}</p>
+                            )}
+                            {linkResult.linked?.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {linkResult.linked.map(c => (
+                                  <Badge key={c.number} className="bg-green-100 text-green-700">{c.number}</Badge>
+                                ))}
+                              </div>
+                            )}
+                            {linkResult.failed?.length > 0 && (
+                              <div className="mt-2 text-xs text-red-600">
+                                {linkResult.failed.map((f, i) => (
+                                  <p key={i}>{f.error || JSON.stringify(f)}</p>
+                                ))}
+                                {linkResult.failed[0]?.available_fields && (
+                                  <details className="mt-2">
+                                    <summary className="cursor-pointer text-slate-600">Available contract fields</summary>
+                                    <pre className="mt-1 text-xs bg-white p-2 rounded overflow-x-auto">
+                                      {JSON.stringify(linkResult.failed[0].available_fields, null, 2)}
+                                    </pre>
+                                  </details>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </TabsContent>
 
           {/* Compare Clauses Tab */}
           <TabsContent value="compare">
