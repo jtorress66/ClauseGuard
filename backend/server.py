@@ -5620,52 +5620,71 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
             except Exception as e:
                 logger.warning(f"Field discovery error: {e}")
 
-            # Step 2: Identify the clause library linked field
+            # Step 2: Identify linked fields from discovered field names
+            # Agiloft linked fields follow pattern: {table_name}_to_{target_table}
+            # or {table_name}_go_{target_table}
+            contract_link_field = "contract_clause_modification_to_contract"  # Known from error messages
             clause_lib_field = None
-            if field_names:
-                # Look for clause library link field
-                for candidate in field_names:
-                    cl = candidate.lower()
-                    if "clause_library" in cl or ("library" in cl and "clause" in cl):
-                        clause_lib_field = candidate
-                        break
-                if not clause_lib_field:
-                    for candidate in field_names:
-                        cl = candidate.lower()
-                        if cl in ("clause_library", "clause"):
-                            clause_lib_field = candidate
-                            break
-                # Check if contract_id is a linked field or plain int
-                if sample_record:
-                    cid_val = sample_record.get("contract_id")
-                    logger.info(f"Sample contract_id value type: {type(cid_val).__name__} = {cid_val}")
 
-            logger.info(f"Using clause_lib_field: {clause_lib_field}")
-            logger.info(f"Available fields: {field_names}")
+            if field_names:
+                # Verify / find the contract link field
+                for f in field_names:
+                    fl = f.lower()
+                    if ("_to_contract" in fl or "_go_contract" in fl) and "contract_clause" in fl:
+                        contract_link_field = f
+                        break
+
+                # Find clause library link field
+                # Pattern: contract_clause_modification_to_* with "clause" but NOT "type" or "contract"
+                for f in field_names:
+                    fl = f.lower()
+                    if f.startswith("contract_clause_modification") and ("_to_" in fl or "_go_" in fl):
+                        # Skip the contract link and clause_type link
+                        if "_to_contract" in fl or "_go_contract" in fl:
+                            continue
+                        if "clause_type" in fl or "type" in fl:
+                            continue
+                        # This should be the clause library link
+                        clause_lib_field = f
+                        break
+
+                if not clause_lib_field:
+                    # Broader search
+                    for f in field_names:
+                        fl = f.lower()
+                        if "clause" in fl and "library" in fl and "type" not in fl:
+                            clause_lib_field = f
+                            break
+
+            logger.info(f"Contract link field: {contract_link_field}")
+            logger.info(f"Clause library link field: {clause_lib_field}")
+            logger.info(f"All discovered fields: {field_names}")
 
             # Step 3: Create junction records
             create_url = _build_agiloft_url(config.kb_url, config.kb_name, TABLE_NAME)
             linked = []
             failed = []
+            working_payload_format = None  # Once we find a format that works, reuse it
 
             for idx, (clause_id, clause_num) in enumerate(zip(link_request.clause_ids, link_request.clause_numbers)):
                 clause_title = link_request.clause_titles[idx] if idx < len(link_request.clause_titles) else clause_num
 
-                # Build payload - contract_id is a plain int (bigint field)
-                payload = {
-                    "contract_id": contract_id_int,
-                }
-
-                # Add clause library link - try linked format first, then plain int
-                if clause_lib_field:
-                    # Check sample to determine format
-                    if sample_record:
-                        sample_val = sample_record.get(clause_lib_field)
-                        if isinstance(sample_val, dict):
-                            payload[clause_lib_field] = {"id": int(clause_id)}
-                        else:
-                            payload[clause_lib_field] = int(clause_id)
-                    else:
+                if working_payload_format:
+                    # Reuse the format that worked for the first clause
+                    payload = dict(working_payload_format)
+                    # Update clause-specific values
+                    for k, v in payload.items():
+                        if k != contract_link_field:
+                            if isinstance(v, dict) and "id" in v:
+                                payload[k] = {"id": int(clause_id)}
+                            elif isinstance(v, int):
+                                payload[k] = int(clause_id)
+                else:
+                    # Build payload: linked fields use {"id": X} format only
+                    payload = {
+                        contract_link_field: {"id": contract_id_int},
+                    }
+                    if clause_lib_field:
                         payload[clause_lib_field] = {"id": int(clause_id)}
 
                 resp = await client.post(
@@ -5676,6 +5695,8 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                 )
 
                 if resp.status_code in [200, 201]:
+                    if not working_payload_format:
+                        working_payload_format = dict(payload)
                     resp_data = resp.json() if resp.text else {}
                     new_id = None
                     if isinstance(resp_data, dict):
@@ -5684,33 +5705,27 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                     linked.append({"number": clause_num, "clause_library_id": clause_id, "contract_clause_id": new_id})
                     logger.info(f"Linked {clause_num} (lib_id={clause_id}) to contract {contract_id_int}")
                 else:
-                    error_text = resp.text[:300]
+                    error_text = resp.text[:500]
                     logger.warning(f"Failed to link {clause_num}: HTTP {resp.status_code} - {error_text}")
 
                     # On first failure, try alternative payload formats
-                    if idx == 0:
-                        # Try with clause library as linked object
+                    if idx == 0 and not working_payload_format:
                         alt_payloads = []
-                        if clause_lib_field:
+                        # Try different clause library field names with {"id": X}
+                        clause_candidates = [clause_lib_field] if clause_lib_field else []
+                        clause_candidates += ["clause_library", "clause", "library_clause",
+                                              "contract_clause_modification_to_clause_library",
+                                              "contract_clause_modification_to_clause",
+                                              "contract_clause_modification_go_clause_library",
+                                              "contract_clause_modification_go_clause"]
+                        # Remove duplicates and None
+                        clause_candidates = list(dict.fromkeys([c for c in clause_candidates if c]))
+
+                        for cc in clause_candidates:
                             alt_payloads.append({
-                                "contract_id": contract_id_int,
-                                clause_lib_field: int(clause_id),
+                                contract_link_field: {"id": contract_id_int},
+                                cc: {"id": int(clause_id)},
                             })
-                            alt_payloads.append({
-                                "contract_id": contract_id_int,
-                                clause_lib_field: {"id": int(clause_id)},
-                            })
-                        # Try generic field names
-                        for generic_field in ["clause_library", "clause", "library_clause"]:
-                            if generic_field != clause_lib_field:
-                                alt_payloads.append({
-                                    "contract_id": contract_id_int,
-                                    generic_field: {"id": int(clause_id)},
-                                })
-                                alt_payloads.append({
-                                    "contract_id": contract_id_int,
-                                    generic_field: int(clause_id),
-                                })
 
                         alt_success = False
                         for alt in alt_payloads:
@@ -5720,11 +5735,11 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                                 json=alt,
                                 headers=auth_headers
                             )
-                            logger.info(f"Alt payload {alt}: {alt_resp.status_code} - {alt_resp.text[:200]}")
+                            logger.info(f"Alt payload {list(alt.keys())}: {alt_resp.status_code} - {alt_resp.text[:300]}")
                             if alt_resp.status_code in [200, 201]:
-                                # Found working format - update clause_lib_field for future iterations
+                                working_payload_format = dict(alt)
                                 for k in alt:
-                                    if k != "contract_id":
+                                    if k != contract_link_field:
                                         clause_lib_field = k
                                 resp_data = alt_resp.json() if alt_resp.text else {}
                                 new_id = None
@@ -5733,6 +5748,7 @@ async def link_clauses_to_contract(link_request: LinkClausesRequest, request: Re
                                     new_id = result.get("id") if isinstance(result, dict) else None
                                 linked.append({"number": clause_num, "clause_library_id": clause_id, "contract_clause_id": new_id})
                                 alt_success = True
+                                logger.info(f"Working format found! Clause lib field: {clause_lib_field}")
                                 break
 
                         if not alt_success:
