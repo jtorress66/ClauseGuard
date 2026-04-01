@@ -3791,7 +3791,6 @@ def _soap_create_ccm(soap_client, session_id: str, contract_id: int, clause_id: 
         DAOcontract_Clause_Modification_To_Contract0=EMPTY_DAO,
         DAOcontract_Clause_Modification_To_Function=EMPTY_DAO,
         DAOcontract_Clause_Modification_To_Print_Template_Clause=EMPTY_DAO,
-        source={'type': 'Added from Library'}
     )
 
     result = soap_client.service.EWCreate_WSContract_Clause_Modification(
