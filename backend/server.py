@@ -377,8 +377,15 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
             return result.strip()
 
         is_dfars = clause_number.startswith("252")
-        clause_type = "DFARS" if is_dfars else "FAR"
-        clause_url = f"https://www.acquisition.gov/dfars/part-252-solicitation-provisions-and-contract-clauses#DFARS_{clause_number}" if is_dfars else f"https://www.acquisition.gov/far/{clause_number.lower()}"
+        is_gsar = clause_number.startswith("552")
+        clause_type = "DFARS" if is_dfars else ("GSAR" if is_gsar else "FAR")
+
+        if is_dfars:
+            clause_url = f"https://www.acquisition.gov/dfars/part-252-solicitation-provisions-and-contract-clauses#DFARS_{clause_number}"
+        elif is_gsar:
+            clause_url = f"https://www.acquisition.gov/gsam/{clause_number.lower()}"
+        else:
+            clause_url = f"https://www.acquisition.gov/far/{clause_number.lower()}"
 
         logger.info(f"Fetching clause {clause_number} ({clause_type}) from acquisition.gov")
 
@@ -414,7 +421,7 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
             else:
                 full_text = text_with_indents(clause_article)
         else:
-            # FAR: each clause has its own page
+            # FAR and GSAR: each clause has its own page
             async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
                 client.headers.update({
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -422,7 +429,7 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                 })
                 
                 response = await client.get(clause_url)
-                logger.info(f"FAR response status: {response.status_code}")
+                logger.info(f"{clause_type} response status: {response.status_code}")
 
                 if response.status_code != 200:
                     logger.warning(f"Failed to fetch {clause_number}: HTTP {response.status_code}")
@@ -434,7 +441,7 @@ async def fetch_clause_from_acquisition_gov(clause_number: str) -> Optional[Dict
                 page_title = soup.find('title')
                 if page_title:
                     title_text = page_title.get_text().strip()
-                    title = re.sub(r'^(FAR|DFARS)\s*', '', title_text)
+                    title = re.sub(r'^(FAR|DFARS|GSAR|GSAM)\s*', '', title_text)
                     title = re.sub(r'^\d+\.\d+-\d+\s*', '', title)
                     title = title.replace('| Acquisition.GOV', '').strip()
                     title = re.sub(r'^[-–—]\s*', '', title).strip()
@@ -6060,7 +6067,7 @@ async def create_missing_and_link(create_request: CreateAndLinkRequest, request:
 
         for clause in create_request.clauses:
             clause_num = clause["number"]
-            clause_type = clause.get("type", "FAR" if clause_num.startswith("52.") else "DFARS")
+            clause_type = clause.get("type", "DFARS" if clause_num.startswith("252.") else ("GSAR" if clause_num.startswith("552.") else "FAR"))
 
             # Fetch full text from acquisition.gov
             acq_data = await fetch_clause_from_acquisition_gov(clause_num)
