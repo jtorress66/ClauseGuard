@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, UploadFile, File, Depends
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, UploadFile, File, Depends, Body
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -5471,6 +5471,211 @@ async def export_flowdown_report(report_request: FlowdownReportRequest, request:
 
 
 # ==================== Agiloft Contract Clause Upload Endpoints ====================
+
+
+class ContractAttachmentsRequest(BaseModel):
+    kb_url: str
+    username: str
+    password: str
+    kb_name: str
+    contract_id: int
+
+
+@agiloft_router.post("/contract-attachments")
+async def get_contract_attachments(req: ContractAttachmentsRequest, request: Request):
+    """Fetch the list of attachments linked to an Agiloft contract."""
+    user = await require_auth(request)
+    kb_url = _norm_agiloft_base(req.kb_url)
+    service_url = _build_soap_url(kb_url, req.kb_name)
+    ns = _build_soap_ns(req.kb_name)
+
+    session_id = await _soap_login(kb_url, req.kb_name, req.username, req.password)
+
+    select_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
+  <soapenv:Body>
+    <ns:EWSelectAndRead_WSAttachment>
+      <sessionId>{session_id}</sessionId>
+      <sqlWhereStatement>contract_id = {int(req.contract_id)}</sqlWhereStatement>
+    </ns:EWSelectAndRead_WSAttachment>
+  </soapenv:Body>
+</soapenv:Envelope>'''
+
+    async with httpx.AsyncClient(timeout=60.0, verify=True) as c:
+        r = await c.post(service_url, content=select_xml.encode('utf-8'),
+                         headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
+    resp = r.text.strip()
+    if '--uuid:' in resp:
+        start = resp.find('<soap:Envelope')
+        if start == -1:
+            start = resp.find('<soap-env:Envelope')
+        if start >= 0:
+            resp = resp[start:]
+
+    if 'faultstring' in resp:
+        fault = re.search(r'<faultstring>(.*?)</faultstring>', resp, re.DOTALL)
+        raise HTTPException(status_code=400, detail=fault.group(1)[:300] if fault else "SOAP fault")
+
+    items = re.findall(r'<(?:\w+:)?tableObjectMap[^>]*>(.*?)</(?:\w+:)?tableObjectMap>', resp, re.DOTALL)
+    attachments = []
+    for item in items:
+        att_id = re.search(r'<id>(\d+)</id>', item)
+        title = re.search(r'<title>(.*?)</title>', item)
+        attached_file = re.search(r'<attached_File>(.*?)</attached_File>', item)
+        status_m = re.search(r'<status>.*?<type>(.*?)</type>.*?</status>', item, re.DOTALL)
+        att_type = re.search(r'<key[^>]*>attachment_type</key><value[^>]*>(.*?)</value>', item, re.DOTALL)
+        date_updated = re.search(r'<date_Updated>(.*?)</date_Updated>', item)
+
+        if att_id:
+            attachments.append({
+                "id": int(att_id.group(1)),
+                "title": title.group(1) if title else "",
+                "filename": attached_file.group(1) if attached_file else "",
+                "status": status_m.group(1).replace("OPTION_", "") if status_m else "",
+                "attachment_type": att_type.group(1) if att_type else "",
+                "date_updated": date_updated.group(1) if date_updated else "",
+            })
+
+    return {"success": True, "contract_id": req.contract_id, "attachments": attachments, "count": len(attachments)}
+
+
+class DownloadExtractRequest(BaseModel):
+    kb_url: str
+    username: str
+    password: str
+    kb_name: str
+    attachment_id: int
+
+
+@agiloft_router.post("/download-attachment-and-extract")
+async def download_attachment_and_extract(req: DownloadExtractRequest, request: Request):
+    """Download a file from an Agiloft attachment record and run clause extraction on it."""
+    user = await require_auth(request)
+    kb_url = _norm_agiloft_base(req.kb_url)
+    service_url = _build_soap_url(kb_url, req.kb_name)
+    ns = _build_soap_ns(req.kb_name)
+
+    session_id = await _soap_login(kb_url, req.kb_name, req.username, req.password)
+
+    # Download the file via EWRetrieveAttached
+    retrieve_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
+  <soapenv:Body>
+    <ns:EWRetrieveAttached>
+      <sessionId>{session_id}</sessionId>
+      <tableName>attachment</tableName>
+      <identifier>{int(req.attachment_id)}</identifier>
+      <fieldName>attached_file</fieldName>
+      <filePosition>0</filePosition>
+    </ns:EWRetrieveAttached>
+  </soapenv:Body>
+</soapenv:Envelope>'''
+
+    async with httpx.AsyncClient(timeout=120.0, verify=True) as c:
+        r = await c.post(service_url, content=retrieve_xml.encode('utf-8'),
+                         headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
+
+    raw = r.content
+    pdf_start = raw.find(b'%PDF')
+    if pdf_start < 0:
+        resp_text = r.text[:1000]
+        fault = re.search(r'<faultstring>(.*?)</faultstring>', resp_text, re.DOTALL)
+        raise HTTPException(status_code=400, detail=fault.group(1)[:200] if fault else "No PDF content found in attachment")
+
+    # Extract the PDF from the MTOM multipart response
+    boundary_m = re.search(r'boundary="?([^";]+)', r.headers.get('content-type', ''))
+    if boundary_m:
+        end_marker = f'\r\n--{boundary_m.group(1)}'.encode()
+        pdf_end = raw.find(end_marker, pdf_start)
+        pdf_data = raw[pdf_start:pdf_end] if pdf_end > 0 else raw[pdf_start:]
+    else:
+        pdf_data = raw[pdf_start:]
+
+    logger.info(f"Downloaded PDF from attachment {req.attachment_id}: {len(pdf_data)} bytes")
+
+    # Now run the same extraction logic as upload-and-extract
+    text_content = ""
+    try:
+        import pdfplumber
+        import io
+        with pdfplumber.open(io.BytesIO(pdf_data)) as pdf:
+            pages_text = []
+            for page in pdf.pages:
+                page_text = page.extract_text() or ""
+                if page_text and "(cid:" in page_text:
+                    page_text = _decode_cid_text(page_text)
+                pages_text.append(page_text)
+            text_content = "\n".join(pages_text)
+    except Exception as e:
+        logger.warning(f"pdfplumber failed: {e}")
+
+    if not text_content.strip():
+        raise HTTPException(status_code=400, detail="Could not extract text from the attachment PDF")
+
+    extraction_result = _extract_clauses_with_checkboxes(text_content)
+    detected_clauses = extraction_result.get("detected_clauses", [])
+    parent_selected_map = extraction_result.get("parent_clauses_with_selections", {})
+    selected_sub_clauses = extraction_result.get("selected_sub_clauses", [])
+    unselected_sub_clauses = extraction_result.get("unselected_sub_clauses", [])
+
+    detected_clauses_set = {c["number"] for c in detected_clauses}
+    selected_sub_nums = {s["number"] for s in selected_sub_clauses}
+    unselected_sub_nums = {u["number"] for u in unselected_sub_clauses}
+
+    def _extract_date(txt):
+        m = re.search(r'\(([A-Z][a-z]{2}\s+\d{4})\)', txt or "")
+        return m.group(1) if m else ""
+
+    filtered_clauses = []
+    seen_numbers = set()
+
+    # 1. Mark parent clauses as seen, only their selected sub-clauses matter
+    if "checkbox_list" in parent_selected_map:
+        parent_clause_patterns = ['52.212-5', '52.212-4', '52.244-6', '252.212-7001', '252.212-7000']
+        for potential_parent in parent_clause_patterns:
+            if potential_parent in detected_clauses_set and potential_parent not in selected_sub_nums:
+                seen_numbers.add(potential_parent)
+                break
+
+    # 2. Selected sub-clauses
+    for sub in selected_sub_clauses:
+        sub_num = sub["number"]
+        if sub_num not in seen_numbers:
+            seen_numbers.add(sub_num)
+            db_clause = await db.clauses.find_one({"number": sub_num}, {"_id": 0})
+            date_match = re.search(r'\(([A-Z][a-z]{2}\s+\d{4})\)', sub.get("source_line", ""))
+            sub_date = date_match.group(1) if date_match else ""
+            filtered_clauses.append({
+                "number": sub_num,
+                "type": "DFARS" if sub_num.startswith("252.") else "FAR",
+                "title": db_clause.get("title", sub.get("title", "")) if db_clause else sub.get("title", ""),
+                "date": sub_date,
+                "in_db": bool(db_clause),
+            })
+
+    # 3. Other detected clauses (excluding parents and unselected subs)
+    for clause in detected_clauses:
+        clause_num = clause["number"]
+        if clause_num in seen_numbers or clause_num in unselected_sub_nums:
+            continue
+        seen_numbers.add(clause_num)
+        db_clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
+        filtered_clauses.append({
+            "number": clause_num,
+            "type": "DFARS" if clause_num.startswith("252.") else "FAR",
+            "title": db_clause.get("title", clause.get("title", "")) if db_clause else clause.get("title", ""),
+            "date": _extract_date(db_clause.get("text", "")) if db_clause else "",
+            "in_db": bool(db_clause),
+        })
+
+    return {
+        "success": True,
+        "attachment_id": req.attachment_id,
+        "total_detected": len(detected_clauses),
+        "total_filtered": len(filtered_clauses),
+        "clauses": filtered_clauses,
+    }
+
 
 @agiloft_router.post("/upload-and-extract")
 async def agiloft_upload_and_extract(request: Request, file: UploadFile = File(...)):

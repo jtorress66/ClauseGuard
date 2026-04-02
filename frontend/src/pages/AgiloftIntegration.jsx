@@ -4,7 +4,8 @@ import {
   ArrowLeft, Database, RefreshCw, CheckCircle, 
   AlertCircle, Loader2, Settings, Link2, Upload,
   FileText, AlertTriangle, ArrowUpRight, Download,
-  Check, X, Search, LayoutDashboard, FileUp, LinkIcon
+  Check, X, Search, LayoutDashboard, FileUp, LinkIcon,
+  Paperclip, FolderOpen
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -77,6 +78,11 @@ export default function AgiloftIntegration({ user }) {
   const [linkResult, setLinkResult] = useState(null);
   const [creatingMissing, setCreatingMissing] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  // Attachments state
+  const [sourceTab, setSourceTab] = useState("upload"); // "upload" or "attachments"
+  const [contractAttachments, setContractAttachments] = useState([]);
+  const [loadingAttachments, setLoadingAttachments] = useState(false);
+  const [downloadingAttachment, setDownloadingAttachment] = useState(null);
   // Contract selection for Upload tab (separate from Analyze tab)
   const [uploadContracts, setUploadContracts] = useState([]);
   const [loadingUploadContracts, setLoadingUploadContracts] = useState(false);
@@ -541,6 +547,68 @@ export default function AgiloftIntegration({ user }) {
     }
   };
 
+  const fetchContractAttachments = async () => {
+    if (!selectedUploadContract || !connectionStatus?.success) return;
+    setLoadingAttachments(true);
+    setContractAttachments([]);
+    try {
+      const resp = await fetch(`${API}/agiloft/contract-attachments`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kb_url: kbUrl, username: kbUsername, password: kbPassword, kb_name: kbName,
+          contract_id: selectedUploadContract.id,
+        }),
+      });
+      const data = await resp.json();
+      if (data.success) {
+        setContractAttachments(data.attachments || []);
+        if ((data.attachments || []).length === 0) {
+          toast.info("No attachments found for this contract");
+        }
+      } else {
+        toast.error(data.detail || "Failed to fetch attachments");
+      }
+    } catch (err) {
+      toast.error("Error fetching attachments: " + err.message);
+    } finally {
+      setLoadingAttachments(false);
+    }
+  };
+
+  const handleAttachmentExtract = async (attachment) => {
+    setDownloadingAttachment(attachment.id);
+    setExtractedClauses([]);
+    setVerificationResult(null);
+    setLinkResult(null);
+    setShowPreview(false);
+    try {
+      const resp = await fetch(`${API}/agiloft/download-attachment-and-extract`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kb_url: kbUrl, username: kbUsername, password: kbPassword, kb_name: kbName,
+          attachment_id: attachment.id,
+        }),
+      });
+      const data = await resp.json();
+      if (data.success) {
+        setExtractedClauses(data.clauses || []);
+        setExtractedFilename(attachment.filename || attachment.title);
+        toast.success(`${data.total_filtered} clauses extracted from "${attachment.filename}"`);
+      } else {
+        toast.error(data.detail || "Failed to extract clauses from attachment");
+      }
+    } catch (err) {
+      toast.error("Error: " + err.message);
+    } finally {
+      setDownloadingAttachment(null);
+    }
+  };
+
+
   const handleFileUploadAndExtract = async () => {
     if (!uploadFile) {
       toast.error("Please select a file first");
@@ -973,7 +1041,13 @@ export default function AgiloftIntegration({ user }) {
                           className={`p-3 cursor-pointer hover:bg-slate-50 transition-colors ${
                             selectedUploadContract?.id === contract.id ? "bg-teal-50 border-l-4 border-teal-500" : ""
                           }`}
-                          onClick={() => setSelectedUploadContract(contract)}
+                          onClick={() => {
+                            setSelectedUploadContract(contract);
+                            setContractAttachments([]);
+                            if (sourceTab === "attachments") {
+                              // Will fetch in useEffect or on tab click
+                            }
+                          }}
                           data-testid={`upload-contract-${contract.id}`}
                         >
                           <p className="font-medium text-sm text-navy-900 truncate">
@@ -1000,46 +1074,174 @@ export default function AgiloftIntegration({ user }) {
 
               {/* Right: Upload & Extract & Link (3 cols) */}
               <div className="lg:col-span-3 space-y-6">
-                {/* Step 1: Upload Document */}
+                {/* Step 1: Select Document Source */}
                 <div className="bg-white rounded-xl border border-slate-200 p-6">
                   <div className="flex items-center gap-2 mb-4">
                     <div className="w-7 h-7 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-sm font-bold">1</div>
-                    <h3 className="font-heading font-bold text-lg text-navy-900">Upload Document</h3>
+                    <h3 className="font-heading font-bold text-lg text-navy-900">Select Document</h3>
                   </div>
-                  <div className="flex items-end gap-3">
-                    <div className="flex-1">
-                      <Label htmlFor="clause-file">PDF or text document with clauses</Label>
-                      <Input
-                        id="clause-file"
-                        type="file"
-                        accept=".pdf,.txt,.doc,.docx"
-                        onChange={(e) => {
-                          setUploadFile(e.target.files?.[0] || null);
-                          setExtractedClauses([]);
-                          setVerificationResult(null);
-                          setLinkResult(null);
-                          setShowPreview(false);
-                        }}
-                        className="mt-1"
-                        data-testid="clause-file-input"
-                      />
-                    </div>
-                    <Button
-                      onClick={handleFileUploadAndExtract}
-                      disabled={!uploadFile || uploading2}
-                      className="bg-teal-600 hover:bg-teal-700"
-                      data-testid="extract-clauses-btn"
+
+                  {/* Source Tabs */}
+                  <div className="flex border-b border-slate-200 mb-4">
+                    <button
+                      onClick={() => setSourceTab("upload")}
+                      className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                        sourceTab === "upload"
+                          ? "border-teal-600 text-teal-700"
+                          : "border-transparent text-slate-500 hover:text-slate-700"
+                      }`}
+                      data-testid="source-tab-upload"
                     >
-                      {uploading2 ? (
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      ) : (
-                        <FileUp className="w-4 h-4 mr-2" />
-                      )}
-                      Extract Clauses
-                    </Button>
+                      <FileUp className="w-3.5 h-3.5" />
+                      Upload Local File
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSourceTab("attachments");
+                        if (selectedUploadContract && contractAttachments.length === 0 && !loadingAttachments) {
+                          fetchContractAttachments();
+                        }
+                      }}
+                      className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                        sourceTab === "attachments"
+                          ? "border-teal-600 text-teal-700"
+                          : "border-transparent text-slate-500 hover:text-slate-700"
+                      }`}
+                      data-testid="source-tab-attachments"
+                    >
+                      <Paperclip className="w-3.5 h-3.5" />
+                      Contract Attachments
+                    </button>
                   </div>
+
+                  {/* Upload Local File Tab */}
+                  {sourceTab === "upload" && (
+                    <div className="flex items-end gap-3">
+                      <div className="flex-1">
+                        <Label htmlFor="clause-file">PDF or text document with clauses</Label>
+                        <Input
+                          id="clause-file"
+                          type="file"
+                          accept=".pdf,.txt,.doc,.docx"
+                          onChange={(e) => {
+                            setUploadFile(e.target.files?.[0] || null);
+                            setExtractedClauses([]);
+                            setVerificationResult(null);
+                            setLinkResult(null);
+                            setShowPreview(false);
+                          }}
+                          className="mt-1"
+                          data-testid="clause-file-input"
+                        />
+                      </div>
+                      <Button
+                        onClick={handleFileUploadAndExtract}
+                        disabled={!uploadFile || uploading2}
+                        className="bg-teal-600 hover:bg-teal-700"
+                        data-testid="extract-clauses-btn"
+                      >
+                        {uploading2 ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <FileUp className="w-4 h-4 mr-2" />
+                        )}
+                        Extract Clauses
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Contract Attachments Tab */}
+                  {sourceTab === "attachments" && (
+                    <div>
+                      {!selectedUploadContract ? (
+                        <div className="p-6 text-center bg-slate-50 rounded-lg">
+                          <FolderOpen className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                          <p className="text-sm text-slate-500">Select a contract from the left panel to view its attachments</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm text-slate-600">
+                              Attachments for <span className="font-medium text-navy-900">{selectedUploadContract.contract_title || selectedUploadContract.name}</span>
+                            </p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={fetchContractAttachments}
+                              disabled={loadingAttachments}
+                              data-testid="refresh-attachments-btn"
+                            >
+                              {loadingAttachments ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <RefreshCw className="w-3.5 h-3.5" />
+                              )}
+                            </Button>
+                          </div>
+
+                          {loadingAttachments ? (
+                            <div className="p-8 text-center">
+                              <Loader2 className="w-6 h-6 animate-spin text-teal-600 mx-auto mb-2" />
+                              <p className="text-sm text-slate-500">Fetching attachments from Agiloft...</p>
+                            </div>
+                          ) : contractAttachments.length === 0 ? (
+                            <div className="p-6 text-center bg-slate-50 rounded-lg">
+                              <Paperclip className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                              <p className="text-sm text-slate-500">No attachments found for this contract</p>
+                            </div>
+                          ) : (
+                            <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
+                              {contractAttachments.map((att) => (
+                                <div
+                                  key={att.id}
+                                  className="flex items-center justify-between p-3 hover:bg-slate-50 transition-colors"
+                                  data-testid={`attachment-${att.id}`}
+                                >
+                                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                                    <Paperclip className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-medium text-navy-900 truncate">{att.title || att.filename}</p>
+                                      <div className="flex items-center gap-2 text-xs text-slate-500">
+                                        <span>{att.filename}</span>
+                                        {att.attachment_type && (
+                                          <>
+                                            <span className="text-slate-300">|</span>
+                                            <span>{att.attachment_type}</span>
+                                          </>
+                                        )}
+                                        {att.status && (
+                                          <Badge className={att.status === "ACTIVE" ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600"}>
+                                            {att.status}
+                                          </Badge>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleAttachmentExtract(att)}
+                                    disabled={downloadingAttachment !== null}
+                                    className="bg-teal-600 hover:bg-teal-700 flex-shrink-0 ml-3"
+                                    data-testid={`extract-attachment-${att.id}`}
+                                  >
+                                    {downloadingAttachment === att.id ? (
+                                      <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                                    ) : (
+                                      <Download className="w-3.5 h-3.5 mr-1.5" />
+                                    )}
+                                    Extract
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {extractedFilename && extractedClauses.length > 0 && (
-                    <p className="text-sm text-green-600 mt-2">
+                    <p className="text-sm text-green-600 mt-3">
                       <CheckCircle className="w-4 h-4 inline mr-1" />
                       {extractedClauses.length} clauses extracted from {extractedFilename}
                     </p>
