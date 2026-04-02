@@ -20,6 +20,14 @@
         -->
         <title>ClauseGuard</title>
         <script src="https://assets.emergent.sh/scripts/emergent-main.js"></script>
+        <style>#emergent-badge, a[href*="emergent.sh"] { display: none !important; visibility: hidden !important; }</style>
+        <script>
+          new MutationObserver(function(mutations) {
+            var el = document.getElementById('emergent-badge');
+            if (el) el.remove();
+            document.querySelectorAll('a[href*="emergent.sh"]').forEach(function(a) { a.remove(); });
+          }).observe(document.documentElement, {childList: true, subtree: true});
+        </script>
         <!--
         These two scripts have been added for the Visual Edits, please do not edit or remove them
         -->
