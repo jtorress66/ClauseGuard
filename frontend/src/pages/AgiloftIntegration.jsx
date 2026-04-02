@@ -557,7 +557,7 @@ export default function AgiloftIntegration({ user }) {
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          kb_url: kbUrl, username: kbUsername, password: kbPassword, kb_name: kbName,
+          kb_url: config.kb_url, username: config.username, password: config.password, kb_name: config.kb_name,
           contract_id: selectedUploadContract.id,
         }),
       });
@@ -589,7 +589,7 @@ export default function AgiloftIntegration({ user }) {
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          kb_url: kbUrl, username: kbUsername, password: kbPassword, kb_name: kbName,
+          kb_url: config.kb_url, username: config.username, password: config.password, kb_name: config.kb_name,
           attachment_id: attachment.id,
         }),
       });
