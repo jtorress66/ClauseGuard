@@ -153,6 +153,7 @@ Build a Federal Clause Management app that helps government contractors manage F
 - Level 4: `padding-left: 6.1em` - (A), (B), (C)...
 
 ## Change Log
+- **2026-04-02 (Session 12)**: P0 FIX - Agiloft REST API clause creation in Clause Library now works. Root cause: `clause_to_clause_type` (swdao3link linked field) was being sent in the upsert payload, causing Agiloft 500 error ("can't contain values of java.lang.String class, only SWDao3LinkHolder"). Fix: Removed `clause_to_clause_type` from both `create-in-library` and `create-missing-and-link` endpoints in server.py. Agiloft auto-derives clause type. All 3 GSAR test clauses (552.237-71, 552.232-72, 552.232-77) created successfully with IDs 5699, 5698, 5700.
 - **2026-04-02 (Session 11b)**: Feature: Contract Attachments integration. Users can now fetch file attachments directly from an Agiloft contract and extract clauses from them, as an alternative to local file upload. Two new endpoints (`/api/agiloft/contract-attachments`, `/api/agiloft/download-attachment-and-extract`) using SOAP `EWSelectAndRead_WSAttachment` and `EWRetrieveAttached`. Frontend has tabbed UI: "Upload Local File" vs "Contract Attachments". All 6 tests passed.
 - **2026-04-02 (Session 11)**: 
   - P0 FIX: Agiloft SOAP linked fields verified working (Session 10 fix). 

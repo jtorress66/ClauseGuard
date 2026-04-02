@@ -8,8 +8,9 @@
 ## Agiloft KB Credentials
 - Username: jtorres
 - Password: Elitebco2026
-- KB URL: https://elitebcopartnerkb.saas.agiloft.com
+- KB URL: https://elitebcopartnerkb.agiloft.com
 - KB Name: elitebcoPartnerKB
+- Note: Use `elitebcopartnerkb.agiloft.com` (without `.saas.`) — the `.saas.` subdomain has DNS issues from some environments
 
 ## Auth Method
 - HTTP-only cookies (session_token)

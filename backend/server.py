@@ -6081,12 +6081,9 @@ async def create_in_library(req: CreateInLibraryRequest, request: Request):
             if clause.get("date"):
                 clause_data["clause_date"] = clause["date"]
 
-            # Get clause type ID (try FAR fallback if GSAR not found)
-            type_id = await agiloft_client_inst.get_clause_type_id(clause_type)
-            if not type_id and clause_type == "GSAR":
-                type_id = await agiloft_client_inst.get_clause_type_id("FAR")
-            if type_id:
-                clause_data["clause_to_clause_type"] = {"id": type_id}
+            # NOTE: Do NOT include clause_to_clause_type in payload.
+            # Agiloft derives clause type automatically and the linked field
+            # (swdao3link) rejects direct REST writes.
 
             result = await agiloft_client_inst.upsert_clause(clause_data, clause_num)
 
@@ -6172,10 +6169,9 @@ async def create_missing_and_link(create_request: CreateAndLinkRequest, request:
             if clause_date:
                 clause_data["clause_date"] = clause_date
 
-            # Get clause type ID
-            type_id = await agiloft_client_inst.get_clause_type_id(clause_type)
-            if type_id:
-                clause_data["clause_to_clause_type"] = {"id": type_id}
+            # NOTE: Do NOT include clause_to_clause_type in payload.
+            # Agiloft derives clause type automatically and the linked field
+            # (swdao3link) rejects direct REST writes.
 
             result = await agiloft_client_inst.upsert_clause(clause_data, clause_num)
 
