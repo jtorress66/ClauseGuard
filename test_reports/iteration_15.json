@@ -1,0 +1,93 @@
+{
+  "summary": "Tested parent clause filtering in PDF extraction and frontend Preview step for ClauseGuard Agiloft Integration. All 3 backend tests passed. Frontend Agiloft page loads correctly with 4 tabs and proper step structure.",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  
+  "features_verified_this_iteration": [
+    {
+      "feature": "POST /api/agiloft/upload-and-extract - Parent clause filtering",
+      "status": "VERIFIED",
+      "verification": "Uploaded test PDF. 52.212-5 (parent clause with checkbox sub-clauses) is correctly EXCLUDED from extracted list. Selected sub-clauses 52.203-6, 52.203-13, 52.204-10 ARE present. Total: 99 detected, 46 filtered (parent clauses removed).",
+      "test_method": "pytest"
+    },
+    {
+      "feature": "No clause has is_parent=True in response",
+      "status": "VERIFIED",
+      "verification": "All 46 extracted clauses have is_parent=False. No parent clause markers in response.",
+      "test_method": "pytest"
+    },
+    {
+      "feature": "Endpoint requires authentication",
+      "status": "VERIFIED",
+      "verification": "Returns 401 for unauthenticated requests.",
+      "test_method": "pytest"
+    },
+    {
+      "feature": "Frontend /agiloft page - Upload to Contract tab",
+      "status": "VERIFIED",
+      "verification": "Page loads with 4 tabs: Upload to Contract, Compare Clauses, Push Clauses, Analyze Contracts. Step 1 'Upload Document' visible with file input and Extract Clauses button.",
+      "test_method": "Playwright"
+    },
+    {
+      "feature": "Frontend Step 3 - Preview & Link to Contract",
+      "status": "VERIFIED (code review)",
+      "verification": "Code review confirms Step 3 'Preview & Link to Contract' is implemented at lines 1157-1330. Shows after verification with: Preview Link button (data-testid='preview-link-btn'), clause list with checkmarks and FAR/DFARS badges, Back to Selection button (data-testid='back-to-selection-btn'), Confirm & Link button (data-testid='confirm-link-btn').",
+      "test_method": "Code review + Playwright (partial - Step 3 only visible after clause verification)"
+    }
+  ],
+  
+  "passed_tests": [
+    "test_upload_and_extract_excludes_parent_clauses",
+    "test_extraction_returns_valid_structure",
+    "test_extraction_requires_authentication"
+  ],
+  
+  "test_report_links": [
+    "/app/backend/tests/test_agiloft_extraction.py",
+    "/app/test_reports/pytest/agiloft_extraction_results.xml"
+  ],
+  
+  "action_items": [],
+  
+  "critical_code_review_comments": [
+    "Parent clause filtering logic at lines 5563-5569 correctly marks parent clauses (52.212-5, 52.212-4, 52.244-6, 252.212-7001, 252.212-7000) as seen and skips them",
+    "Selected sub-clauses are added at lines 5571-5588 with is_parent=False",
+    "Frontend Preview step correctly shows clause list with checkmarks, FAR/DFARS badges, and action buttons",
+    "showPreview state variable controls the preview mode transition"
+  ],
+  
+  "updated_files": [
+    "/app/backend/tests/test_agiloft_extraction.py"
+  ],
+  
+  "success_rate": {
+    "backend": "100% (3/3 tests passed)",
+    "frontend": "100% (page loads, tabs visible, code review confirms Preview step)"
+  },
+  
+  "test_credentials": "jtorres@elitebco.com / test123",
+  
+  "seed_data_creation": "None - used existing test PDF at /tmp/test_contract.pdf",
+  
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  
+  "context_for_next_testing_agent": "Parent clause filtering in agiloft_upload_and_extract endpoint is working correctly. The endpoint at line 5476 uses _extract_clauses_with_checkboxes() to detect checkbox sections and parent clauses. Parent clauses like 52.212-5 that contain checkbox sub-clauses are excluded from the final list - only the selected sub-clauses (marked with XX) are returned. Frontend Preview step is implemented at lines 1157-1330 in AgiloftIntegration.jsx with proper data-testid attributes for testing.",
+  
+  "extraction_details": {
+    "test_pdf": "/tmp/test_contract.pdf",
+    "total_detected": 99,
+    "total_filtered": 46,
+    "parent_clauses_excluded": ["52.212-5"],
+    "sample_sub_clauses_included": ["52.203-6", "52.203-13", "52.204-10", "52.204-14", "52.209-6", "52.209-9", "52.219-9", "52.219-14"]
+  }
+}

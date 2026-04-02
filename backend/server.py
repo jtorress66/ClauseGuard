@@ -5560,29 +5560,12 @@ async def agiloft_upload_and_extract(request: Request, file: UploadFile = File(.
     filtered_clauses = []
     seen_numbers = set()
 
-    # 1. Parent clauses with selected sub-clauses
+    # 1. Mark parent clauses as seen (skip them), but let their selected sub-clauses through in section 2
     if "checkbox_list" in parent_selected_map:
-        selected_subs = parent_selected_map["checkbox_list"]
         parent_clause_patterns = ['52.212-5', '52.212-4', '52.244-6', '252.212-7001', '252.212-7000']
         for potential_parent in parent_clause_patterns:
             if potential_parent in detected_clauses_set and potential_parent not in selected_sub_nums:
-                seen_numbers.add(potential_parent)
-                db_clause = await db.clauses.find_one({"number": potential_parent}, {"_id": 0})
-                sub_details = []
-                for sub in selected_subs:
-                    sub_db = await db.clauses.find_one({"number": sub["number"]}, {"_id": 0})
-                    sub_title = sub_db.get("title", sub.get("title", "")) if sub_db else sub.get("title", "")
-                    date_match = re.search(r'\(([A-Z][a-z]{2}\s+\d{4})\)', sub.get("source_line", ""))
-                    sub_date = f" ({date_match.group(1)})" if date_match else ""
-                    sub_details.append({"number": sub["number"], "title": sub_title, "date": sub_date.strip(" ()")})
-                filtered_clauses.append({
-                    "number": potential_parent,
-                    "type": "FAR" if potential_parent.startswith("52.") else "DFARS",
-                    "title": db_clause.get("title", "") if db_clause else "",
-                    "date": _extract_date(db_clause.get("text", "")) if db_clause else "",
-                    "is_parent": True,
-                    "selected_sub_clauses": sub_details,
-                })
+                seen_numbers.add(potential_parent)  # Skip parent - only its selected sub-clauses matter
                 break
 
     # 2. Selected sub-clauses

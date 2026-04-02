@@ -76,6 +76,7 @@ export default function AgiloftIntegration({ user }) {
   const [linking, setLinking] = useState(false);
   const [linkResult, setLinkResult] = useState(null);
   const [creatingMissing, setCreatingMissing] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   // Contract selection for Upload tab (separate from Analyze tab)
   const [uploadContracts, setUploadContracts] = useState([]);
   const [loadingUploadContracts, setLoadingUploadContracts] = useState(false);
@@ -550,6 +551,7 @@ export default function AgiloftIntegration({ user }) {
     setVerificationResult(null);
     setLinkResult(null);
     setSelectedForLink([]);
+    setShowPreview(false);
 
     try {
       const formData = new FormData();
@@ -588,6 +590,7 @@ export default function AgiloftIntegration({ user }) {
     setVerifying(true);
     setVerificationResult(null);
     setLinkResult(null);
+    setShowPreview(false);
 
     try {
       const clauseNumbers = extractedClauses.map(c => c.number);
@@ -1015,6 +1018,7 @@ export default function AgiloftIntegration({ user }) {
                           setExtractedClauses([]);
                           setVerificationResult(null);
                           setLinkResult(null);
+                          setShowPreview(false);
                         }}
                         className="mt-1"
                         data-testid="clause-file-input"
@@ -1150,19 +1154,19 @@ export default function AgiloftIntegration({ user }) {
                   </div>
                 )}
 
-                {/* Step 3: Link to Contract */}
+                {/* Step 3: Preview & Confirm Link */}
                 {verificationResult && verificationResult.found_count > 0 && (
                   <div className="bg-white rounded-xl border border-slate-200 p-6">
                     <div className="flex items-center gap-2 mb-4">
                       <div className="w-7 h-7 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-sm font-bold">3</div>
-                      <h3 className="font-heading font-bold text-lg text-navy-900">Link to Agiloft Contract</h3>
+                      <h3 className="font-heading font-bold text-lg text-navy-900">Preview & Link to Contract</h3>
                     </div>
 
                     {!selectedUploadContract ? (
                       <div className="p-4 bg-slate-50 rounded-lg text-center">
                         <p className="text-slate-500 text-sm">Select a contract from the left panel to link clauses</p>
                       </div>
-                    ) : (
+                    ) : !showPreview && !linkResult ? (
                       <div className="space-y-4">
                         <div className="p-3 bg-slate-50 rounded-lg">
                           <p className="text-sm text-navy-900">
@@ -1173,26 +1177,103 @@ export default function AgiloftIntegration({ user }) {
                             {selectedForLink.length} of {verificationResult.found_count} library clauses selected for linking
                           </p>
                         </div>
-
                         <Button
-                          onClick={linkSelectedClausesToContract}
-                          disabled={linking || selectedForLink.length === 0}
-                          className="w-full bg-teal-600 hover:bg-teal-700"
-                          data-testid="link-clauses-btn"
+                          onClick={() => setShowPreview(true)}
+                          disabled={selectedForLink.length === 0}
+                          className="w-full bg-indigo-600 hover:bg-indigo-700"
+                          data-testid="preview-link-btn"
                         >
-                          {linking ? (
-                            <>
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                              Linking...
-                            </>
-                          ) : (
-                            <>
-                              <LinkIcon className="w-4 h-4 mr-2" />
-                              Link {selectedForLink.length} Clauses to Contract
-                            </>
-                          )}
+                          <FileText className="w-4 h-4 mr-2" />
+                          Preview Link ({selectedForLink.length} Clauses)
                         </Button>
+                      </div>
+                    ) : showPreview && !linkResult ? (
+                      <div className="space-y-4">
+                        {/* Preview Header */}
+                        <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-lg">
+                          <h4 className="font-heading font-semibold text-indigo-900 mb-2">Link Confirmation</h4>
+                          <div className="grid grid-cols-2 gap-3 text-sm">
+                            <div>
+                              <span className="text-indigo-600 font-medium">Target Contract</span>
+                              <p className="text-navy-900 font-medium mt-0.5">
+                                {selectedUploadContract.contract_title || selectedUploadContract.name}
+                              </p>
+                              <p className="text-xs text-slate-500">Agiloft ID: {selectedUploadContract.id}</p>
+                              {selectedUploadContract.contract_type && (
+                                <p className="text-xs text-slate-500">Type: {selectedUploadContract.contract_type}</p>
+                              )}
+                            </div>
+                            <div>
+                              <span className="text-indigo-600 font-medium">Clauses to Link</span>
+                              <p className="text-navy-900 font-medium mt-0.5">{selectedForLink.length} clauses</p>
+                              <p className="text-xs text-slate-500">
+                                {selectedForLink.filter(n => n.startsWith("52.")).length} FAR, {selectedForLink.filter(n => n.startsWith("252.")).length} DFARS
+                              </p>
+                            </div>
+                          </div>
+                        </div>
 
+                        {/* Clause List Preview */}
+                        <div className="border border-slate-200 rounded-lg">
+                          <div className="p-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                            <span className="text-xs font-medium text-slate-600 uppercase tracking-wide">Clauses to be linked</span>
+                            <span className="text-xs text-slate-500">{selectedForLink.length} items</span>
+                          </div>
+                          <div className="max-h-56 overflow-y-auto divide-y divide-slate-50">
+                            {selectedForLink.map((clauseNum) => {
+                              const foundClause = verificationResult.found.find(f => f.number === clauseNum);
+                              const extracted = extractedClauses.find(c => c.number === clauseNum);
+                              return (
+                                <div key={clauseNum} className="flex items-center gap-3 p-2.5 text-sm" data-testid={`preview-clause-${clauseNum}`}>
+                                  <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                                  <span className="font-mono font-medium text-navy-900 w-28 flex-shrink-0">{clauseNum}</span>
+                                  <Badge className={clauseNum.startsWith("52.") ? "bg-blue-100 text-blue-700" : "bg-purple-100 text-purple-700"}>
+                                    {clauseNum.startsWith("52.") ? "FAR" : "DFARS"}
+                                  </Badge>
+                                  <span className="text-slate-600 truncate flex-1">
+                                    {extracted?.title || foundClause?.title || ""}
+                                  </span>
+                                  {foundClause?.agiloft_id && (
+                                    <span className="text-xs text-slate-400 flex-shrink-0">Lib #{foundClause.agiloft_id}</span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="flex gap-3">
+                          <Button
+                            variant="outline"
+                            onClick={() => setShowPreview(false)}
+                            className="flex-1"
+                            data-testid="back-to-selection-btn"
+                          >
+                            Back to Selection
+                          </Button>
+                          <Button
+                            onClick={linkSelectedClausesToContract}
+                            disabled={linking || selectedForLink.length === 0}
+                            className="flex-1 bg-teal-600 hover:bg-teal-700"
+                            data-testid="confirm-link-btn"
+                          >
+                            {linking ? (
+                              <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                Linking...
+                              </>
+                            ) : (
+                              <>
+                                <LinkIcon className="w-4 h-4 mr-2" />
+                                Confirm & Link {selectedForLink.length} Clauses
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
                         {linkResult && (
                           <div className={`p-4 rounded-lg ${
                             linkResult.success ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"
@@ -1207,9 +1288,6 @@ export default function AgiloftIntegration({ user }) {
                                 {linkResult.message}
                               </span>
                             </div>
-                            {linkResult.working_strategy && (
-                              <p className="text-xs text-slate-500">Strategy: {linkResult.working_strategy}</p>
-                            )}
                             {linkResult.table_used && (
                               <p className="text-xs text-slate-500">Table: {linkResult.table_used}</p>
                             )}
@@ -1236,21 +1314,16 @@ export default function AgiloftIntegration({ user }) {
                                 ))}
                               </div>
                             )}
-                            {linkResult.strategies_tried && (
-                              <p className="text-xs text-slate-500 mt-1">Tried: {linkResult.strategies_tried.join(", ")}</p>
-                            )}
-                            {linkResult.sample_full_record && (
-                              <details className="mt-2" open>
-                                <summary className="cursor-pointer text-xs text-slate-600 font-medium">
-                                  Full record structure from Agiloft (all fields)
-                                </summary>
-                                <pre className="mt-1 text-xs bg-white p-2 rounded overflow-x-auto max-h-80 border">
-                                  {JSON.stringify(linkResult.sample_full_record, null, 2)}
-                                </pre>
-                              </details>
-                            )}
                           </div>
                         )}
+                        <Button
+                          variant="outline"
+                          onClick={() => { setShowPreview(false); setLinkResult(null); }}
+                          className="w-full"
+                          data-testid="back-after-link-btn"
+                        >
+                          Back to Selection
+                        </Button>
                       </div>
                     )}
                   </div>
