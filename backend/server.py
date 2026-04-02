@@ -2396,6 +2396,23 @@ async def rescan_contract_clauses(contract_id: str, request: Request):
     return result
 
 
+
+def _extract_inline_clause_references(text_content: str) -> list:
+    """Fallback extractor for documents that reference clauses inline (e.g., PWS/SOW).
+    
+    Scans for patterns like 'FAR 52.223-9', 'DFARS 252.xxx-x', 'GSAR 552.xxx-x',
+    or bare clause numbers embedded in paragraph text.
+    """
+    pattern = re.compile(r'(?:FAR|DFARS?|GSAR)?\s*(?:clause\s+)?(\d{2,3}\.\d{3}-\d+)', re.IGNORECASE)
+    matches = pattern.findall(text_content)
+    unique_numbers = set()
+    for m in matches:
+        # Only keep FAR (52.xxx), DFARS (252.xxx), or GSAR (552.xxx) patterns
+        if m.startswith(('52.', '252.', '552.')):
+            unique_numbers.add(m)
+    return sorted(unique_numbers)
+
+
 def _extract_clauses_with_checkboxes(text_content: str) -> Dict[str, Any]:
     """
     Extract ALL clauses from contract document with checkbox detection.
@@ -5668,10 +5685,32 @@ async def download_attachment_and_extract(req: DownloadExtractRequest, request: 
             "in_db": bool(db_clause),
         })
 
+    # 4. Fallback: if primary extraction found nothing, scan for inline clause references
+    if not filtered_clauses:
+        inline_refs = _extract_inline_clause_references(text_content)
+        for clause_num in inline_refs:
+            if clause_num not in seen_numbers:
+                seen_numbers.add(clause_num)
+                db_clause = await db.clauses.find_one({"number": clause_num}, {"_id": 0})
+                clause_type = "FAR"
+                if clause_num.startswith("252."):
+                    clause_type = "DFARS"
+                elif clause_num.startswith("552."):
+                    clause_type = "GSAR"
+                filtered_clauses.append({
+                    "number": clause_num,
+                    "type": clause_type,
+                    "title": db_clause.get("title", "") if db_clause else "",
+                    "date": _extract_date(db_clause.get("text", "")) if db_clause else "",
+                    "in_db": bool(db_clause),
+                    "source": "inline_reference",
+                })
+        logger.info(f"Fallback inline scan found {len(filtered_clauses)} clause references")
+
     return {
         "success": True,
         "attachment_id": req.attachment_id,
-        "total_detected": len(detected_clauses),
+        "total_detected": len(detected_clauses) or len(filtered_clauses),
         "total_filtered": len(filtered_clauses),
         "clauses": filtered_clauses,
     }
