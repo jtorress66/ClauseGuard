@@ -153,6 +153,7 @@ Build a Federal Clause Management app that helps government contractors manage F
 - Level 4: `padding-left: 6.1em` - (A), (B), (C)...
 
 ## Change Log
+- **2026-04-02 (Session 11b)**: Feature: Contract Attachments integration. Users can now fetch file attachments directly from an Agiloft contract and extract clauses from them, as an alternative to local file upload. Two new endpoints (`/api/agiloft/contract-attachments`, `/api/agiloft/download-attachment-and-extract`) using SOAP `EWSelectAndRead_WSAttachment` and `EWRetrieveAttached`. Frontend has tabbed UI: "Upload Local File" vs "Contract Attachments". All 6 tests passed.
 - **2026-04-02 (Session 11)**: 
   - P0 FIX: Agiloft SOAP linked fields verified working (Session 10 fix). 
   - Enhancement: Parent clause filtering for Agiloft extraction — parent clauses like 52.212-5 are now excluded from the extracted clause list; only their selected sub-clauses (marked with XX) are returned. 99 detected → 46 filtered (was 47, removed parent).
