@@ -6033,6 +6033,91 @@ class CreateAndLinkRequest(BaseModel):
     clauses: List[Dict[str, Any]]  # [{number, title, date, type}, ...]
     existing_clause_ids: Dict[str, int] = {}  # {clause_number: agiloft_id} for already-existing clauses
 
+
+class CreateInLibraryRequest(BaseModel):
+    config: AgiloftConfig
+    clauses: list
+
+
+@agiloft_router.post("/create-in-library")
+async def create_in_library(req: CreateInLibraryRequest, request: Request):
+    """Create missing clauses in the Agiloft Clause Library ONLY (no linking)."""
+    user = await require_auth(request)
+    config = req.config
+
+    if not AGILOFT_CLIENT_AVAILABLE:
+        return {"success": False, "message": "Agiloft client not available"}
+
+    agiloft_client_inst = AgiloftClient(AgiloftConfig(
+        kb_url=config.kb_url, kb_name=config.kb_name,
+        username=config.username, password=config.password
+    ))
+
+    logged_in = await agiloft_client_inst.login()
+    if not logged_in:
+        return {"success": False, "message": "Failed to authenticate with Agiloft"}
+
+    created = []
+    failed = []
+
+    for clause in req.clauses:
+        clause_num = clause.get("number", "")
+        clause_type = clause.get("type", "DFARS" if clause_num.startswith("252.") else ("GSAR" if clause_num.startswith("552.") else "FAR"))
+
+        try:
+            # Fetch text from acquisition.gov
+            acq_data = await fetch_clause_from_acquisition_gov(clause_num)
+            clause_text = acq_data.get("text", "") if acq_data else ""
+            clause_title = acq_data.get("title", clause.get("title", "")) if acq_data else clause.get("title", "")
+
+            # Fetch HTML for rich text
+            html_content = await fetch_clause_html_from_acquisition_gov(clause_num)
+
+            clause_data = {
+                "clause_number": clause_num,
+                "clause_title": clause_title,
+                "clause_text": html_content if html_content else clause_text,
+            }
+            if clause.get("date"):
+                clause_data["clause_date"] = clause["date"]
+
+            # Get clause type ID (try FAR fallback if GSAR not found)
+            type_id = await agiloft_client_inst.get_clause_type_id(clause_type)
+            if not type_id and clause_type == "GSAR":
+                type_id = await agiloft_client_inst.get_clause_type_id("FAR")
+            if type_id:
+                clause_data["clause_to_clause_type"] = {"id": type_id}
+
+            result = await agiloft_client_inst.upsert_clause(clause_data, clause_num)
+
+            if result.get("success"):
+                new_id = result.get("id")
+                if not new_id:
+                    data = result.get("data", {})
+                    if isinstance(data, dict):
+                        r = data.get("result")
+                        new_id = r if isinstance(r, int) else (r.get("id") if isinstance(r, dict) else None)
+                created.append({"number": clause_num, "title": clause_title, "agiloft_id": new_id})
+                logger.info(f"Created clause {clause_num} in library, id={new_id}")
+            else:
+                error = result.get("error", "Unknown error")
+                failed.append({"number": clause_num, "error": error})
+                logger.warning(f"Failed to create clause {clause_num}: {error}")
+
+        except Exception as e:
+            failed.append({"number": clause_num, "error": str(e)[:300]})
+            logger.error(f"Exception creating clause {clause_num}: {e}")
+
+    return {
+        "success": len(created) > 0,
+        "created_count": len(created),
+        "failed_count": len(failed),
+        "created": created,
+        "failed": failed,
+        "message": f"Created {len(created)} clauses in Clause Library" + (f", {len(failed)} failed" if failed else ""),
+    }
+
+
 @agiloft_router.post("/create-missing-and-link")
 async def create_missing_and_link(create_request: CreateAndLinkRequest, request: Request):
     """

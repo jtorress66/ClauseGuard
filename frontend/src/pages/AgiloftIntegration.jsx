@@ -771,41 +771,30 @@ export default function AgiloftIntegration({ user }) {
           number: m.number,
           title: extracted?.title || "",
           date: extracted?.date || "",
-          type: extracted?.type || (m.number.startsWith("252") ? "DFARS" : "FAR"),
+          type: extracted?.type || (m.number.startsWith("252") ? "DFARS" : (m.number.startsWith("552") ? "GSAR" : "FAR")),
         };
       });
 
-      // Collect existing clause IDs from the verify results
-      const existingClauseIds = {};
-      if (verificationResult?.found) {
-        for (const f of verificationResult.found) {
-          if (f.agiloft_id) {
-            existingClauseIds[f.number] = f.agiloft_id;
-          }
-        }
-      }
-
-      const response = await fetch(`${API}/agiloft/create-missing-and-link`, {
+      const response = await fetch(`${API}/agiloft/create-in-library`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
           config,
-          contract_id: String(selectedUploadContract?.id || ""),
           clauses: missingClauses,
-          existing_clause_ids: existingClauseIds,
         })
       });
 
       const result = await response.json();
       if (result.success) {
         const msgs = [];
-        if (result.uploaded_count > 0) msgs.push(`Uploaded ${result.uploaded_count} clauses`);
-        if (result.linked_count > 0) msgs.push(`Linked ${result.linked_count} to contract`);
-        if (result.link_failed_count > 0) msgs.push(`${result.link_failed_count} link failures`);
+        if (result.created_count > 0) msgs.push(`Created ${result.created_count} clauses in Library`);
+        if (result.failed_count > 0) msgs.push(`${result.failed_count} failed`);
         toast.success(msgs.join(", ") || "Done");
-        setLinkResult(result);
-        // Re-verify to update the found/missing counts
+        if (result.failed?.length > 0) {
+          result.failed.forEach(f => toast.error(`${f.number}: ${f.error}`));
+        }
+        // Re-verify to update found/missing counts
         await verifyClausesInLibrary();
       } else {
         toast.error(result.message || "Creation failed");
