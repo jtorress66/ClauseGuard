@@ -3826,6 +3826,54 @@ async def _soap_login(kb_url: str, kb_name: str, username: str, password: str) -
     logger.info(f"SOAP login successful, session: {session_id[:20]}...")
     return session_id
 
+async def _soap_update_clause_type(kb_url: str, kb_name: str, session_id: str, clause_id: int, clause_type_id: int) -> bool:
+    """Update a clause record's clause_to_clause_type linked field via SOAP.
+
+    REST API cannot write swdao3link fields, so we use SOAP EWUpdate_WSClause.
+    The record ID is passed inside ewwsBaseUserObjectMap as the 'id' field.
+    """
+    service_url = _build_soap_url(kb_url, kb_name)
+    ns = _build_soap_ns(kb_name)
+
+    update_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
+  <soapenv:Body>
+    <ns:EWUpdate_WSClause>
+      <sessionId>{session_id}</sessionId>
+      <ewwsBaseUserObjectMap>
+        <id>{clause_id}</id>
+        <DAOclause_To_Clause_Type>
+          <entry>
+            <key xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xs="http://www.w3.org/2001/XMLSchema" xsi:type="xs:string">id</key>
+            <value xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xs="http://www.w3.org/2001/XMLSchema" xsi:type="xs:long">{clause_type_id}</value>
+          </entry>
+        </DAOclause_To_Clause_Type>
+      </ewwsBaseUserObjectMap>
+    </ns:EWUpdate_WSClause>
+  </soapenv:Body>
+</soapenv:Envelope>'''
+
+    async with httpx.AsyncClient(timeout=30.0, verify=True) as c:
+        resp = await c.post(service_url, content=update_xml.encode('utf-8'),
+                            headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
+
+    resp_text = resp.text.strip()
+    if '--uuid:' in resp_text:
+        start = resp_text.find('<soap:Envelope')
+        if start == -1:
+            start = resp_text.find('<soap-env:Envelope')
+        if start >= 0:
+            resp_text = resp_text[start:]
+
+    if 'faultstring' in resp_text:
+        fault = re.search(r'<faultstring>(.*?)</faultstring>', resp_text, re.DOTALL)
+        logger.error(f"SOAP update clause type failed: {fault.group(1) if fault else resp_text[:300]}")
+        return False
+
+    logger.info(f"SOAP: Updated clause {clause_id} type to clause_type_id={clause_type_id}")
+    return True
+
+
 async def _soap_create_ccm(kb_url: str, kb_name: str, session_id: str, contract_id: int, clause_id: int, clause_text: str = "", clause_type: str = "") -> int:
     """Create a contract_clause_modification record via SOAP with all links in a single call.
 
@@ -6041,7 +6089,8 @@ class CreateInLibraryRequest(BaseModel):
 
 @agiloft_router.post("/create-in-library")
 async def create_in_library(req: CreateInLibraryRequest, request: Request):
-    """Create missing clauses in the Agiloft Clause Library ONLY (no linking)."""
+    """Create missing clauses in the Agiloft Clause Library ONLY (no linking).
+    Sets clause type via SOAP since REST can't write swdao3link fields."""
     user = await require_auth(request)
     config = req.config
 
@@ -6057,12 +6106,22 @@ async def create_in_library(req: CreateInLibraryRequest, request: Request):
     if not logged_in:
         return {"success": False, "message": "Failed to authenticate with Agiloft"}
 
+    # SOAP login for setting clause type (REST can't write swdao3link fields)
+    soap_session = None
+    try:
+        soap_session = await _soap_login(config.kb_url, config.kb_name, config.username, config.password)
+    except Exception as e:
+        logger.warning(f"SOAP login failed (clause type won't be set): {e}")
+
+    # Clause type name → Agiloft clause_type ID mapping
+    CLAUSE_TYPE_IDS = {"FAR": 121, "DFARS": 122, "GSAM": 123}
+
     created = []
     failed = []
 
     for clause in req.clauses:
         clause_num = clause.get("number", "")
-        clause_type = clause.get("type", "DFARS" if clause_num.startswith("252.") else ("GSAR" if clause_num.startswith("552.") else "FAR"))
+        clause_type = clause.get("type", "DFARS" if clause_num.startswith("252.") else ("GSAM" if clause_num.startswith("552.") else "FAR"))
 
         try:
             # Fetch text from acquisition.gov
@@ -6081,10 +6140,7 @@ async def create_in_library(req: CreateInLibraryRequest, request: Request):
             if clause.get("date"):
                 clause_data["clause_date"] = clause["date"]
 
-            # NOTE: Do NOT include clause_to_clause_type in payload.
-            # Agiloft derives clause type automatically and the linked field
-            # (swdao3link) rejects direct REST writes.
-
+            # Step 1: Create/upsert clause via REST (without linked fields)
             result = await agiloft_client_inst.upsert_clause(clause_data, clause_num)
 
             if result.get("success"):
@@ -6094,8 +6150,20 @@ async def create_in_library(req: CreateInLibraryRequest, request: Request):
                     if isinstance(data, dict):
                         r = data.get("result")
                         new_id = r if isinstance(r, int) else (r.get("id") if isinstance(r, dict) else None)
-                created.append({"number": clause_num, "title": clause_title, "agiloft_id": new_id})
-                logger.info(f"Created clause {clause_num} in library, id={new_id}")
+
+                # Step 2: Set clause type via SOAP
+                type_set = False
+                if new_id and soap_session and clause_type in CLAUSE_TYPE_IDS:
+                    try:
+                        type_set = await _soap_update_clause_type(
+                            config.kb_url, config.kb_name, soap_session,
+                            int(new_id), CLAUSE_TYPE_IDS[clause_type]
+                        )
+                    except Exception as te:
+                        logger.warning(f"Failed to set clause type for {clause_num}: {te}")
+
+                created.append({"number": clause_num, "title": clause_title, "agiloft_id": new_id, "type_set": type_set})
+                logger.info(f"Created clause {clause_num} in library, id={new_id}, type_set={type_set}")
             else:
                 error = result.get("error", "Unknown error")
                 failed.append({"number": clause_num, "error": error})
@@ -6142,6 +6210,15 @@ async def create_missing_and_link(create_request: CreateAndLinkRequest, request:
         if not logged_in:
             return {"success": False, "message": "Failed to authenticate with Agiloft"}
 
+        # SOAP login for setting clause type (REST can't write swdao3link fields)
+        soap_session = None
+        try:
+            soap_session = await _soap_login(config.kb_url, config.kb_name, config.username, config.password)
+        except Exception as e:
+            logger.warning(f"SOAP login failed (clause type won't be set): {e}")
+
+        CLAUSE_TYPE_IDS = {"FAR": 121, "DFARS": 122, "GSAM": 123}
+
         # Step 1: Upload missing clauses and collect their Agiloft IDs
         uploaded = []
         upload_failed = []
@@ -6149,7 +6226,7 @@ async def create_missing_and_link(create_request: CreateAndLinkRequest, request:
 
         for clause in create_request.clauses:
             clause_num = clause["number"]
-            clause_type = clause.get("type", "DFARS" if clause_num.startswith("252.") else ("GSAR" if clause_num.startswith("552.") else "FAR"))
+            clause_type = clause.get("type", "DFARS" if clause_num.startswith("252.") else ("GSAM" if clause_num.startswith("552.") else "FAR"))
 
             # Fetch full text from acquisition.gov
             acq_data = await fetch_clause_from_acquisition_gov(clause_num)
@@ -6170,8 +6247,7 @@ async def create_missing_and_link(create_request: CreateAndLinkRequest, request:
                 clause_data["clause_date"] = clause_date
 
             # NOTE: Do NOT include clause_to_clause_type in payload.
-            # Agiloft derives clause type automatically and the linked field
-            # (swdao3link) rejects direct REST writes.
+            # REST can't write swdao3link fields; we set type via SOAP after creation.
 
             result = await agiloft_client_inst.upsert_clause(clause_data, clause_num)
 
@@ -6183,6 +6259,16 @@ async def create_missing_and_link(create_request: CreateAndLinkRequest, request:
                     if isinstance(data, dict):
                         r = data.get("result")
                         new_id = r if isinstance(r, int) else (r.get("id") if isinstance(r, dict) else None)
+
+                # Set clause type via SOAP
+                if new_id and soap_session and clause_type in CLAUSE_TYPE_IDS:
+                    try:
+                        await _soap_update_clause_type(
+                            config.kb_url, config.kb_name, soap_session,
+                            int(new_id), CLAUSE_TYPE_IDS[clause_type]
+                        )
+                    except Exception as te:
+                        logger.warning(f"Failed to set clause type for {clause_num}: {te}")
 
                 if new_id:
                     all_clause_ids[clause_num] = int(new_id)

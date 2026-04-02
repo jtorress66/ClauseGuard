@@ -771,7 +771,7 @@ export default function AgiloftIntegration({ user }) {
           number: m.number,
           title: extracted?.title || "",
           date: extracted?.date || "",
-          type: extracted?.type || (m.number.startsWith("252") ? "DFARS" : (m.number.startsWith("552") ? "GSAR" : "FAR")),
+          type: extracted?.type || (m.number.startsWith("252") ? "DFARS" : (m.number.startsWith("552") ? "GSAM" : "FAR")),
         };
       });
 
