@@ -593,13 +593,24 @@ export default function AgiloftIntegration({ user }) {
           attachment_id: attachment.id,
         }),
       });
-      const data = await resp.json();
+      let data;
+      try {
+        data = await resp.json();
+      } catch {
+        toast.error("Server returned an invalid response. Check the attachment format.");
+        return;
+      }
       if (data.success) {
-        setExtractedClauses(data.clauses || []);
+        const clauses = data.clauses || [];
+        setExtractedClauses(clauses);
         setExtractedFilename(attachment.filename || attachment.title);
-        toast.success(`${data.total_filtered} clauses extracted from "${attachment.filename}"`);
+        if (clauses.length > 0) {
+          toast.success(`${data.total_filtered} clauses extracted from "${attachment.filename || attachment.title}"`);
+        } else {
+          toast.info(`No clauses found in "${attachment.filename || attachment.title}"`);
+        }
       } else {
-        toast.error(data.detail || "Failed to extract clauses from attachment");
+        toast.error(data.message || data.detail || "Failed to extract clauses from attachment");
       }
     } catch (err) {
       toast.error("Error: " + err.message);

@@ -5695,41 +5695,68 @@ async def download_attachment_and_extract(req: DownloadExtractRequest, request: 
                          headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
 
     raw = r.content
-    pdf_start = raw.find(b'%PDF')
-    if pdf_start < 0:
-        resp_text = r.text[:1000]
+
+    # Check for SOAP fault
+    resp_text = r.text[:2000]
+    if 'faultstring' in resp_text:
         fault = re.search(r'<faultstring>(.*?)</faultstring>', resp_text, re.DOTALL)
-        raise HTTPException(status_code=400, detail=fault.group(1)[:200] if fault else "No PDF content found in attachment")
+        return {"success": False, "message": fault.group(1)[:200] if fault else "SOAP download failed", "clauses": [], "total_filtered": 0}
 
-    # Extract the PDF from the MTOM multipart response
+    # Extract file data from MTOM multipart response
     boundary_m = re.search(r'boundary="?([^";]+)', r.headers.get('content-type', ''))
-    if boundary_m:
-        end_marker = f'\r\n--{boundary_m.group(1)}'.encode()
-        pdf_end = raw.find(end_marker, pdf_start)
-        pdf_data = raw[pdf_start:pdf_end] if pdf_end > 0 else raw[pdf_start:]
-    else:
-        pdf_data = raw[pdf_start:]
 
-    logger.info(f"Downloaded PDF from attachment {req.attachment_id}: {len(pdf_data)} bytes")
+    # Determine file type and extract binary content
+    pdf_start = raw.find(b'%PDF')
+    docx_start = raw.find(b'PK\x03\x04')  # ZIP/DOCX magic bytes
 
-    # Now run the same extraction logic as upload-and-extract
+    import io
     text_content = ""
-    try:
-        import pdfplumber
-        import io
-        with pdfplumber.open(io.BytesIO(pdf_data)) as pdf:
-            pages_text = []
-            for page in pdf.pages:
-                page_text = page.extract_text() or ""
-                if page_text and "(cid:" in page_text:
-                    page_text = _decode_cid_text(page_text)
-                pages_text.append(page_text)
-            text_content = "\n".join(pages_text)
-    except Exception as e:
-        logger.warning(f"pdfplumber failed: {e}")
+
+    if pdf_start >= 0:
+        # PDF extraction
+        if boundary_m:
+            end_marker = f'\r\n--{boundary_m.group(1)}'.encode()
+            pdf_end = raw.find(end_marker, pdf_start)
+            file_data = raw[pdf_start:pdf_end] if pdf_end > 0 else raw[pdf_start:]
+        else:
+            file_data = raw[pdf_start:]
+
+        logger.info(f"Downloaded PDF from attachment {req.attachment_id}: {len(file_data)} bytes")
+        try:
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(file_data)) as pdf:
+                pages_text = []
+                for page in pdf.pages:
+                    page_text = page.extract_text() or ""
+                    if page_text and "(cid:" in page_text:
+                        page_text = _decode_cid_text(page_text)
+                    pages_text.append(page_text)
+                text_content = "\n".join(pages_text)
+        except Exception as e:
+            logger.warning(f"pdfplumber failed: {e}")
+
+    elif docx_start >= 0:
+        # DOCX extraction
+        if boundary_m:
+            end_marker = f'\r\n--{boundary_m.group(1)}'.encode()
+            docx_end = raw.find(end_marker, docx_start)
+            file_data = raw[docx_start:docx_end] if docx_end > 0 else raw[docx_start:]
+        else:
+            file_data = raw[docx_start:]
+
+        logger.info(f"Downloaded DOCX from attachment {req.attachment_id}: {len(file_data)} bytes")
+        try:
+            from docx import Document
+            doc = Document(io.BytesIO(file_data))
+            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+            text_content = "\n".join(paragraphs)
+        except Exception as e:
+            logger.warning(f"python-docx failed: {e}")
+    else:
+        return {"success": False, "message": "Unsupported file format (only PDF and DOCX are supported)", "clauses": [], "total_filtered": 0}
 
     if not text_content.strip():
-        raise HTTPException(status_code=400, detail="Could not extract text from the attachment PDF")
+        return {"success": True, "message": "No readable text found in the attachment", "clauses": [], "total_filtered": 0}
 
     extraction_result = _extract_clauses_with_checkboxes(text_content)
     detected_clauses = extraction_result.get("detected_clauses", [])
