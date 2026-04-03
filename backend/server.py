@@ -5598,58 +5598,62 @@ class ContractAttachmentsRequest(BaseModel):
 
 @agiloft_router.post("/contract-attachments")
 async def get_contract_attachments(req: ContractAttachmentsRequest, request: Request):
-    """Fetch the list of attachments linked to an Agiloft contract."""
+    """Fetch the list of attachments linked to an Agiloft contract using REST API."""
     user = await require_auth(request)
     kb_url = _norm_agiloft_base(req.kb_url)
-    service_url = _build_soap_url(kb_url, req.kb_name)
-    ns = _build_soap_ns(req.kb_name)
 
-    session_id = await _soap_login(kb_url, req.kb_name, req.username, req.password)
+    # Use REST API (handles multiple results; SOAP EWSelectAndRead fails with >1 record)
+    base_rest = f"{kb_url}/ewws/alrest/{req.kb_name.lower()}"
 
-    select_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="{ns}">
-  <soapenv:Body>
-    <ns:EWSelectAndRead_WSAttachment>
-      <sessionId>{session_id}</sessionId>
-      <sqlWhereStatement>contract_id = {int(req.contract_id)}</sqlWhereStatement>
-    </ns:EWSelectAndRead_WSAttachment>
-  </soapenv:Body>
-</soapenv:Envelope>'''
+    async with httpx.AsyncClient(timeout=60.0, verify=True) as client:
+        # Login
+        login_resp = await client.post(f"{base_rest}/login", json={
+            "login": req.username, "password": req.password,
+            "KB": req.kb_name, "lang": "EN"
+        }, headers={"Content-Type": "application/json", "Accept": "application/json"})
 
-    async with httpx.AsyncClient(timeout=60.0, verify=True) as c:
-        r = await c.post(service_url, content=select_xml.encode('utf-8'),
-                         headers={'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': ''})
-    resp = r.text.strip()
-    if '--uuid:' in resp:
-        start = resp.find('<soap:Envelope')
-        if start == -1:
-            start = resp.find('<soap-env:Envelope')
-        if start >= 0:
-            resp = resp[start:]
+        if login_resp.status_code != 200:
+            raise HTTPException(status_code=401, detail="Agiloft login failed")
 
-    if 'faultstring' in resp:
-        fault = re.search(r'<faultstring>(.*?)</faultstring>', resp, re.DOTALL)
-        raise HTTPException(status_code=400, detail=fault.group(1)[:300] if fault else "SOAP fault")
+        token = login_resp.json().get("result", {}).get("access_token")
+        if not token:
+            raise HTTPException(status_code=401, detail="No access token from Agiloft")
 
-    items = re.findall(r'<(?:\w+:)?tableObjectMap[^>]*>(.*?)</(?:\w+:)?tableObjectMap>', resp, re.DOTALL)
+        # Search attachments for this contract
+        search_resp = await client.post(
+            f"{base_rest}/attachment/search",
+            params={"lang": "en"},
+            json={
+                "search": "",
+                "field": ["id", "title", "attached_file", "status", "date_updated"],
+                "query": f"contract_id~='{int(req.contract_id)}'"
+            },
+            headers={"Content-Type": "application/json", "Accept": "application/json",
+                      "Authorization": f"Bearer {token}"}
+        )
+
+    if search_resp.status_code != 200:
+        raise HTTPException(status_code=search_resp.status_code,
+                            detail=f"Attachment search failed: {search_resp.text[:300]}")
+
+    data = search_resp.json()
+    result = data.get("result", [])
+
     attachments = []
-    for item in items:
-        att_id = re.search(r'<id>(\d+)</id>', item)
-        title = re.search(r'<title>(.*?)</title>', item)
-        attached_file = re.search(r'<attached_File>(.*?)</attached_File>', item)
-        status_m = re.search(r'<status>.*?<type>(.*?)</type>.*?</status>', item, re.DOTALL)
-        att_type = re.search(r'<key[^>]*>attachment_type</key><value[^>]*>(.*?)</value>', item, re.DOTALL)
-        date_updated = re.search(r'<date_Updated>(.*?)</date_Updated>', item)
-
-        if att_id:
-            attachments.append({
-                "id": int(att_id.group(1)),
-                "title": title.group(1) if title else "",
-                "filename": attached_file.group(1) if attached_file else "",
-                "status": status_m.group(1).replace("OPTION_", "") if status_m else "",
-                "attachment_type": att_type.group(1) if att_type else "",
-                "date_updated": date_updated.group(1) if date_updated else "",
-            })
+    if isinstance(result, list):
+        for rec in result:
+            att_id = rec.get("id")
+            if att_id:
+                files = rec.get("attached_file", [])
+                filename = files[0] if isinstance(files, list) and files else (files if isinstance(files, str) else "")
+                attachments.append({
+                    "id": int(att_id),
+                    "title": rec.get("title", ""),
+                    "filename": filename,
+                    "status": rec.get("status", ""),
+                    "attachment_type": "",
+                    "date_updated": rec.get("date_updated", ""),
+                })
 
     return {"success": True, "contract_id": req.contract_id, "attachments": attachments, "count": len(attachments)}
 
